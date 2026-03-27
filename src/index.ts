@@ -21,6 +21,12 @@ async function main() {
   await app.register(whatsappRoutes);
   await app.register(bookingRoutes);
 
+  if (process.env.NODE_ENV !== 'production') {
+    const { devRoutes } = await import('./routes/dev.js');
+    await app.register(devRoutes);
+    logger.info('Dev routes enabled at /dev/*');
+  }
+
   startWorkers();
   await startScheduler();
 

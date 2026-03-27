@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 
 async function main() {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL;
   if (!url) {
     console.log('DATABASE_URL not set — skipping pgvector setup');
     process.exit(0);
