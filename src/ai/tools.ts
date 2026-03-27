@@ -29,28 +29,31 @@ export function getTravelAgentTools(): Tool[] {
     },
     {
       name: 'search_flights',
-      description: 'Search for flights between two airports/cities.',
+      description:
+        'Search for flights between two airports/cities. Returns real-time pricing from 300+ airlines via Duffel.',
       input_schema: {
         type: 'object' as const,
         properties: {
           origin: {
             type: 'string',
-            description: 'Airport code or city name',
+            description: 'IATA airport or city code (e.g. SFO, NYC, LHR)',
           },
           destination: {
             type: 'string',
-            description: 'Airport code or city name',
+            description: 'IATA airport or city code',
           },
-          departure_date: { type: 'string' },
-          return_date: { type: 'string' },
+          departure_date: {
+            type: 'string',
+            description: 'YYYY-MM-DD',
+          },
+          return_date: {
+            type: 'string',
+            description: 'YYYY-MM-DD for round trip',
+          },
           passengers: { type: 'number' },
           cabin_class: {
             type: 'string',
             enum: ['economy', 'premium_economy', 'business', 'first'],
-          },
-          preferred_airlines: {
-            type: 'array',
-            items: { type: 'string' },
           },
         },
         required: ['origin', 'destination', 'departure_date'],

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { searchHotels } from '../search/hotels.js';
-import { searchFlights } from '../search/flights.js';
+import { searchFlights, type FlightSearchParams } from '../search/flights.js';
 import { searchRestaurants } from '../search/restaurants.js';
 import { searchExperiences } from '../search/experiences.js';
 import { searchTransport } from '../search/transport.js';
@@ -51,8 +51,7 @@ const TOOL_HANDLERS: Record<
       departureDate: input.departure_date as string,
       returnDate: input.return_date as string | undefined,
       passengers: input.passengers as number | undefined,
-      cabinClass: input.cabin_class as string | undefined,
-      preferredAirlines: input.preferred_airlines as string[] | undefined,
+      cabinClass: input.cabin_class as FlightSearchParams['cabinClass'],
     }),
 
   search_restaurants: async (input) =>

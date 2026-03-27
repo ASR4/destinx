@@ -23,8 +23,7 @@ const envSchema = z.object({
 
   // Search APIs — optional (features degrade gracefully)
   GOOGLE_MAPS_API_KEY: z.string().optional(),
-  AMADEUS_CLIENT_ID: z.string().optional(),
-  AMADEUS_CLIENT_SECRET: z.string().optional(),
+  DUFFEL_API_KEY: z.string().optional(),
   BRAVE_SEARCH_API_KEY: z.string().optional(),
 
   TWO_CAPTCHA_API_KEY: z.string().optional(),
