@@ -12,22 +12,38 @@ import { logger } from './utils/logger.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-async function ensurePgVector() {
+async function ensureDbExtensionsAndConstraints() {
   const url = process.env.DATABASE_URL;
   if (!url) return;
   const sql = postgres(url);
   try {
     await sql`CREATE EXTENSION IF NOT EXISTS vector`;
     logger.info('pgvector extension ensured');
+
+    // Deduplicate user_preferences before adding unique constraint
+    // (drizzle-kit push can't do this non-interactively)
+    await sql`
+      DELETE FROM user_preferences a USING user_preferences b
+      WHERE a.id > b.id
+        AND a.user_id = b.user_id
+        AND a.category = b.category
+        AND a.key = b.key
+    `;
+    await sql`
+      ALTER TABLE user_preferences
+      ADD CONSTRAINT IF NOT EXISTS user_preferences_user_id_category_key_unique
+      UNIQUE (user_id, category, key)
+    `;
+    logger.info('user_preferences unique constraint ensured');
   } catch (err) {
-    logger.warn({ err }, 'Could not create pgvector extension (may need superuser)');
+    logger.warn({ err }, 'DB setup warning (non-fatal)');
   } finally {
     await sql.end();
   }
 }
 
 async function main() {
-  await ensurePgVector();
+  await ensureDbExtensionsAndConstraints();
 
   const app = Fastify({ logger: false });
 
