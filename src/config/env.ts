@@ -2,24 +2,30 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
-  APP_URL: z.string().url(),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  APP_URL: z.string().default('http://localhost:3000'),
 
+  // Core infra — required
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
 
-  ANTHROPIC_API_KEY: z.string().startsWith('sk-ant-'),
+  // AI — required for conversations, optional for boot
+  ANTHROPIC_API_KEY: z.string().optional(),
 
-  TWILIO_ACCOUNT_SID: z.string().startsWith('AC'),
-  TWILIO_AUTH_TOKEN: z.string().min(1),
-  TWILIO_WHATSAPP_NUMBER: z.string().startsWith('+'),
+  // WhatsApp — optional for local testing without Twilio
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_NUMBER: z.string().default('+14155238886'),
 
-  BROWSERBASE_API_KEY: z.string().min(1),
-  BROWSERBASE_PROJECT_ID: z.string().min(1),
+  // Browser automation — optional
+  BROWSERBASE_API_KEY: z.string().optional(),
+  BROWSERBASE_PROJECT_ID: z.string().optional(),
 
-  GOOGLE_MAPS_API_KEY: z.string().min(1),
-  AMADEUS_CLIENT_ID: z.string().min(1),
-  AMADEUS_CLIENT_SECRET: z.string().min(1),
-  BRAVE_SEARCH_API_KEY: z.string().min(1),
+  // Search APIs — optional (features degrade gracefully)
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+  AMADEUS_CLIENT_ID: z.string().optional(),
+  AMADEUS_CLIENT_SECRET: z.string().optional(),
+  BRAVE_SEARCH_API_KEY: z.string().optional(),
 
   TWO_CAPTCHA_API_KEY: z.string().optional(),
 
