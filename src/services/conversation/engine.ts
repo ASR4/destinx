@@ -53,7 +53,8 @@ export async function processMessage(
   ];
 
   let finalText = '';
-  let holdingMessageSent = false;
+  const collectedText: string[] = [];
+  let holdingMessagesSent = new Set<string>();
   const loopStartTime = Date.now();
 
   for (let iteration = 0; iteration < CONVERSATION.MAX_TOOL_LOOP_ITERATIONS; iteration++) {
@@ -72,18 +73,23 @@ export async function processMessage(
       (b): b is Anthropic.Messages.TextBlock => b.type === 'text',
     );
 
+    const iterText = textBlocks.map((b) => b.text).join('\n').trim();
+
     if (toolUseBlocks.length === 0) {
-      finalText = textBlocks.map((b) => b.text).join('\n') ||
-        "I'm working on that — give me just a moment!";
+      finalText = iterText || collectedText[collectedText.length - 1] || '';
       break;
     }
 
+    if (iterText) collectedText.push(iterText);
+
     const elapsed = Date.now() - loopStartTime;
-    if (!holdingMessageSent && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
+    if (elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
       const toolNames = toolUseBlocks.map((b) => b.name);
       const holdingMsg = getHoldingMessage(toolNames);
-      options.onProgress?.(holdingMsg);
-      holdingMessageSent = true;
+      if (!holdingMessagesSent.has(holdingMsg)) {
+        options.onProgress?.(holdingMsg);
+        holdingMessagesSent.add(holdingMsg);
+      }
     }
 
     const toolResults = await executeToolCalls(
@@ -108,14 +114,15 @@ export async function processMessage(
       },
     ];
 
-    if (textBlocks.length > 0 && response.stop_reason === 'end_turn') {
-      finalText = textBlocks.map((b) => b.text).join('\n');
+    if (response.stop_reason === 'end_turn' && iterText) {
+      finalText = iterText;
       break;
     }
   }
 
   if (!finalText) {
-    finalText = "I've gathered quite a bit of info! Let me put it all together for you.";
+    finalText = collectedText[collectedText.length - 1] ||
+      "I've gathered quite a bit of info! Let me put it all together for you.";
   }
 
   memoryQueue.add('extract', {
