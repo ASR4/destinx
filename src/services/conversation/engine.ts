@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { eq, and, inArray, sql, desc } from 'drizzle-orm';
 import { getAnthropicClient } from '../../ai/client.js';
 import { getTravelAgentTools } from '../../ai/tools.js';
 import { buildSystemPrompt } from '../../ai/prompts/system.js';
@@ -7,8 +8,9 @@ import { getConversationHistory } from './context.js';
 import { classifyIntent } from './intent.js';
 import { getNextState, isConfirmationInState } from './state-machine.js';
 import { executeToolCalls, getHoldingMessage } from './tool-executor.js';
-import { sendText } from '../whatsapp/sender.js';
 import { memoryQueue } from '../../jobs/queue.js';
+import { getDb } from '../../db/client.js';
+import { conversations, trips } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
 import { AI, CONVERSATION } from '../../config/constants.js';
 import type { ConversationFSMState } from '../../config/constants.js';
@@ -21,17 +23,6 @@ export interface ProcessMessageOptions {
 
 /**
  * Main conversation orchestrator — the "brain" of the application.
- *
- * Full flow:
- * 1. Load user profile + preferences from memory
- * 2. Load conversation history and current FSM state
- * 3. Classify intent considering current state
- * 4. Transition the state machine
- * 5. Call Claude with tools in a multi-turn loop
- * 6. Execute tool calls in parallel, feed results back
- * 7. Cap at MAX_TOOL_LOOP_ITERATIONS to prevent runaway loops
- * 8. Send final coherent response via WhatsApp
- * 9. Queue background memory extraction
  */
 export async function processMessage(
   userId: string,
@@ -45,7 +36,6 @@ export async function processMessage(
   const history = await getConversationHistory(conversationId);
   const activeTrip = await getActiveTrip(userId);
 
-  // --- State machine transition ---
   const currentState = await getConversationState(conversationId);
 
   if (isConfirmationInState(currentState, userMessage)) {
@@ -56,9 +46,8 @@ export async function processMessage(
   const nextState = getNextState(currentState, intent.intent);
   await saveConversationState(conversationId, nextState);
 
-  // --- Multi-turn tool-use loop ---
   const anthropic = getAnthropicClient();
-  let messages: Anthropic.Messages.MessageParam[] = [
+  let claudeMessages: Anthropic.Messages.MessageParam[] = [
     ...history,
     { role: 'user' as const, content: userMessage },
   ];
@@ -72,7 +61,7 @@ export async function processMessage(
       model: AI.CONVERSATION_MODEL,
       max_tokens: AI.MAX_CONVERSATION_TOKENS,
       system: buildSystemPrompt(userProfile, activeTrip),
-      messages,
+      messages: claudeMessages,
       tools: getTravelAgentTools(),
     });
 
@@ -89,7 +78,6 @@ export async function processMessage(
       break;
     }
 
-    // Send a contextual holding message if this is taking time and we haven't already
     const elapsed = Date.now() - loopStartTime;
     if (!holdingMessageSent && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
       const toolNames = toolUseBlocks.map((b) => b.name);
@@ -98,15 +86,17 @@ export async function processMessage(
       holdingMessageSent = true;
     }
 
-    // Execute all tool calls in parallel
     const toolResults = await executeToolCalls(
-      toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> })),
+      toolUseBlocks.map((b) => ({
+        id: b.id,
+        name: b.name,
+        input: b.input as Record<string, unknown>,
+      })),
       { userId, userPhone: options.userPhone },
     );
 
-    // Build the tool_result messages for Claude
-    messages = [
-      ...messages,
+    claudeMessages = [
+      ...claudeMessages,
       { role: 'assistant' as const, content: response.content },
       {
         role: 'user' as const,
@@ -118,7 +108,6 @@ export async function processMessage(
       },
     ];
 
-    // If Claude also returned text alongside tool calls, accumulate it
     if (textBlocks.length > 0 && response.stop_reason === 'end_turn') {
       finalText = textBlocks.map((b) => b.text).join('\n');
       break;
@@ -129,7 +118,6 @@ export async function processMessage(
     finalText = "I've gathered quite a bit of info! Let me put it all together for you.";
   }
 
-  // Queue background memory extraction
   memoryQueue.add('extract', {
     userId,
     messages: [
@@ -142,16 +130,53 @@ export async function processMessage(
 }
 
 async function getActiveTrip(userId: string): Promise<Trip | null> {
-  // TODO: Query trips table for user's active trip
-  logger.debug({ userId }, 'getActiveTrip stub');
-  return null;
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(trips)
+    .where(
+      and(
+        eq(trips.userId, userId),
+        inArray(trips.status, ['planning', 'confirmed']),
+      ),
+    )
+    .orderBy(desc(trips.createdAt))
+    .limit(1);
+
+  if (rows.length === 0) return null;
+
+  const row = rows[0]!;
+  return {
+    id: row.id,
+    userId: row.userId,
+    destination: row.destination ?? '',
+    startDate: row.startDate ?? '',
+    endDate: row.endDate ?? '',
+    status: (row.status as Trip['status']) ?? 'planning',
+    plan: (row.plan as Trip['plan']) ?? { days: [] },
+    budget: row.budget as Trip['budget'],
+    travelers: row.travelers as Trip['travelers'],
+    createdAt: row.createdAt ?? new Date(),
+    updatedAt: row.updatedAt ?? new Date(),
+  };
 }
 
 async function getConversationState(
   conversationId: string,
 ): Promise<ConversationFSMState> {
-  // TODO: Read from conversations.context.fsmState
-  logger.debug({ conversationId }, 'getConversationState stub');
+  const db = getDb();
+  const rows = await db
+    .select({ context: conversations.context })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+
+  if (rows.length === 0) return 'idle';
+
+  const ctx = rows[0]!.context as Record<string, unknown> | null;
+  const state = ctx?.fsmState as string | undefined;
+
+  if (state && isValidFSMState(state)) return state;
   return 'idle';
 }
 
@@ -159,6 +184,28 @@ async function saveConversationState(
   conversationId: string,
   state: ConversationFSMState,
 ): Promise<void> {
-  // TODO: Update conversations.context.fsmState
-  logger.debug({ conversationId, state }, 'saveConversationState stub');
+  const db = getDb();
+
+  const rows = await db
+    .select({ context: conversations.context })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+
+  const existingContext = (rows[0]?.context as Record<string, unknown>) ?? {};
+  const updatedContext = { ...existingContext, fsmState: state };
+
+  await db
+    .update(conversations)
+    .set({ context: updatedContext, updatedAt: new Date() })
+    .where(eq(conversations.id, conversationId));
+}
+
+function isValidFSMState(s: string): s is ConversationFSMState {
+  const valid: string[] = [
+    'idle', 'gathering_info', 'planning', 'reviewing_plan',
+    'modifying_plan', 'pre_booking', 'booking_in_progress',
+    'awaiting_confirmation', 'post_trip',
+  ];
+  return valid.includes(s);
 }

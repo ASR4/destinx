@@ -71,6 +71,16 @@ export function startWorkers(): void {
         });
 
         await sendText(userPhone, responseText);
+
+        // Persist the assistant's response to the messages table
+        const { getDb } = await import('../db/client.js');
+        const { messages } = await import('../db/schema.js');
+        await getDb().insert(messages).values({
+          conversationId,
+          role: 'assistant',
+          content: responseText,
+          messageType: 'text',
+        });
       },
       { connection: conn, concurrency: QUEUE.CONVERSATION_CONCURRENCY },
     ),
@@ -102,8 +112,16 @@ export function startWorkers(): void {
     new Worker(
       'memory',
       async (job) => {
-        const { processMemoryExtraction } = await import('./workers/memory-extract.js');
-        await processMemoryExtraction(job.data);
+        if (job.name === 'confidence-decay') {
+          const { runConfidenceDecay } = await import('./scheduler.js');
+          await runConfidenceDecay();
+        } else if (job.name === 'post-trip-check') {
+          const { runPostTripCheck } = await import('./scheduler.js');
+          await runPostTripCheck();
+        } else {
+          const { processMemoryExtraction } = await import('./workers/memory-extract.js');
+          await processMemoryExtraction(job.data);
+        }
       },
       { connection: conn, concurrency: QUEUE.MEMORY_CONCURRENCY },
     ),

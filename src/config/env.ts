@@ -26,6 +26,10 @@ const envSchema = z.object({
   VOYAGE_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
 
+  OPENWEATHERMAP_API_KEY: z.string().optional(),
+
+  HEALTH_CHECK_API_KEY: z.string().optional(),
+
   CLOUDFLARE_R2_ACCESS_KEY: z.string().optional(),
   CLOUDFLARE_R2_SECRET_KEY: z.string().optional(),
   CLOUDFLARE_R2_BUCKET: z.string().default('travel-agent'),

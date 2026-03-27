@@ -7,20 +7,26 @@ export async function whatsappRoutes(app: FastifyInstance) {
   /**
    * POST /webhook/whatsapp
    * Twilio sends form-urlencoded data here when a user messages the WhatsApp number.
-   * Must respond within 15 seconds — heavy processing is queued.
+   * Validates Twilio request signature, then queues processing.
    */
   app.post('/webhook/whatsapp', async (request, reply) => {
     const body = request.body as TwilioWebhookPayload;
 
+    // Validate Twilio request signature
+    const isValid = await validateTwilioSignature(request);
+    if (!isValid) {
+      logger.warn({ messageSid: body.MessageSid }, 'Invalid Twilio signature — rejecting');
+      reply.status(403).send('Forbidden');
+      return;
+    }
+
     logger.info(
-      { messageSid: body.MessageSid, from: body.From },
+      { messageSid: body.MessageSid },
       'WhatsApp webhook received',
     );
 
-    // Respond to Twilio immediately with empty TwiML
     reply.type('text/xml').status(200).send('<Response></Response>');
 
-    // Process the message async (don't await in the request handler)
     handleIncomingMessage({
       body: body.Body,
       from: body.From,
@@ -36,11 +42,40 @@ export async function whatsappRoutes(app: FastifyInstance) {
     });
   });
 
-  /**
-   * GET /webhook/whatsapp
-   * Twilio verification endpoint for webhook setup.
-   */
   app.get('/webhook/whatsapp', async (_request, reply) => {
     reply.status(200).send('OK');
   });
+}
+
+async function validateTwilioSignature(
+  request: { headers: Record<string, string | string[] | undefined>; body: unknown },
+): Promise<boolean> {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) {
+    logger.warn('TWILIO_AUTH_TOKEN not set — skipping signature validation');
+    return true;
+  }
+
+  const signature = request.headers['x-twilio-signature'] as string | undefined;
+  if (!signature) {
+    return false;
+  }
+
+  const appUrl = process.env.APP_URL;
+  if (!appUrl) {
+    logger.warn('APP_URL not set — skipping signature validation');
+    return true;
+  }
+
+  const url = `${appUrl}/webhook/whatsapp`;
+  const params = request.body as Record<string, string>;
+
+  try {
+    const { default: Twilio } = await import('twilio');
+    const isValid = Twilio.validateRequest(authToken, signature, url, params);
+    return isValid;
+  } catch (err) {
+    logger.error({ err }, 'Twilio signature validation error');
+    return false;
+  }
 }

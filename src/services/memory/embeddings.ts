@@ -4,15 +4,50 @@ import { AI } from '../../config/constants.js';
 import { logger } from '../../utils/logger.js';
 
 /**
- * Generate an embedding vector for a text string.
- * Uses Voyage AI or OpenAI embeddings API.
+ * Generate an embedding vector using Voyage AI (voyage-large-2).
+ * Falls back to a zero vector if the API key is missing or the call fails.
  */
 export async function embedText(text: string): Promise<number[]> {
-  // TODO: Implement with Voyage AI or OpenAI
-  // const response = await voyageClient.embed({ input: text, model: 'voyage-2' });
-  // return response.data[0].embedding;
-  logger.warn('embedText not yet implemented — returning zero vector');
-  return new Array(AI.EMBEDDING_DIMENSIONS).fill(0);
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) {
+    logger.warn('VOYAGE_API_KEY not set — returning zero vector');
+    return new Array(AI.EMBEDDING_DIMENSIONS).fill(0);
+  }
+
+  try {
+    const response = await fetch('https://api.voyageai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'voyage-large-2',
+        input: [text],
+        input_type: 'document',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error({ status: response.status, body: errorText }, 'Voyage AI embedding failed');
+      return new Array(AI.EMBEDDING_DIMENSIONS).fill(0);
+    }
+
+    const data = (await response.json()) as {
+      data: Array<{ embedding: number[] }>;
+    };
+
+    if (!data.data?.[0]?.embedding) {
+      logger.error('Voyage AI returned no embedding data');
+      return new Array(AI.EMBEDDING_DIMENSIONS).fill(0);
+    }
+
+    return data.data[0].embedding;
+  } catch (err) {
+    logger.error({ err }, 'Voyage AI embedding request failed');
+    return new Array(AI.EMBEDDING_DIMENSIONS).fill(0);
+  }
 }
 
 /**
