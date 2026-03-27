@@ -54,7 +54,7 @@ export async function processMessage(
 
   let finalText = '';
   const collectedText: string[] = [];
-  let holdingMessagesSent = new Set<string>();
+  let holdingMessageSent = false;
   const loopStartTime = Date.now();
 
   for (let iteration = 0; iteration < CONVERSATION.MAX_TOOL_LOOP_ITERATIONS; iteration++) {
@@ -83,13 +83,10 @@ export async function processMessage(
     if (iterText) collectedText.push(iterText);
 
     const elapsed = Date.now() - loopStartTime;
-    if (elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
+    if (!holdingMessageSent && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
       const toolNames = toolUseBlocks.map((b) => b.name);
-      const holdingMsg = getHoldingMessage(toolNames);
-      if (!holdingMessagesSent.has(holdingMsg)) {
-        options.onProgress?.(holdingMsg);
-        holdingMessagesSent.add(holdingMsg);
-      }
+      options.onProgress?.(getHoldingMessage(toolNames));
+      holdingMessageSent = true;
     }
 
     const toolResults = await executeToolCalls(

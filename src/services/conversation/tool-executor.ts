@@ -146,7 +146,9 @@ const TOOL_HANDLERS: Record<
     const offerId = input.offer_id as string;
     const passengers = input.passengers as DuffelPassenger[];
 
-    // First attempt: use the original offer ID
+    // First attempt: use the original offer ID.
+    // bookFlight() throws on non-retriable errors (missing API key, Duffel API errors).
+    // It returns null only when the offer has expired — which we can retry.
     const directResult = await bookFlight(offerId, passengers);
     if (directResult) {
       return {
@@ -158,7 +160,7 @@ const TOOL_HANDLERS: Record<
       };
     }
 
-    // Offer expired — retry with fresh search if we have flight context
+    // Offer expired — retry with fresh search if we have enough context
     const flightNumber = input.flight_number as string | undefined;
     const origin = input.origin as string | undefined;
     const destination = input.destination as string | undefined;
@@ -181,20 +183,35 @@ const TOOL_HANDLERS: Record<
           note: `Price at booking: ${retryResult.price.amount} ${retryResult.price.currency}`,
         };
       }
+      return {
+        status: 'failed',
+        error: 'The original offer expired and the same flight could not be found in a fresh search. Ask the user if they would like to search for alternatives.',
+      };
     }
 
     return {
       status: 'failed',
-      error: 'Flight booking failed — offer expired and retry could not find the same flight. Please search again.',
+      error: 'The flight offer has expired. Ask the user to confirm they still want this flight, then use search_flights to get a fresh offer before booking.',
     };
   },
 
-  initiate_booking: async (input, ctx) =>
-    startBookingSession(ctx.userId, ctx.userPhone, {
+  initiate_booking: async (input, ctx) => {
+    if (input.booking_type === 'flight') {
+      return {
+        error: 'Do not use initiate_booking for flights. Use the book_flight tool instead — flights are booked directly via the Duffel API.',
+      };
+    }
+    if (!process.env.BROWSERBASE_API_KEY) {
+      return {
+        error: 'Browser-based booking is not configured on this server. Provide the user with a direct link to book on the provider\'s website.',
+      };
+    }
+    return startBookingSession(ctx.userId, ctx.userPhone, {
       type: input.booking_type,
       ...(input.details as Record<string, unknown>),
       userPhone: ctx.userPhone,
-    } as any),
+    } as any);
+  },
 
   save_preference: async (input, ctx) => {
     await upsertPreference(ctx.userId, {

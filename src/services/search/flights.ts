@@ -134,8 +134,7 @@ export async function bookFlight(
   passengers: DuffelPassenger[],
 ): Promise<FlightBookingResult | null> {
   if (!process.env.DUFFEL_API_KEY) {
-    logger.error('DUFFEL_API_KEY not set');
-    return null;
+    throw new Error('Flight booking is not available — DUFFEL_API_KEY is not configured on this server.');
   }
 
   // Always re-fetch the offer immediately before booking to get the live price
@@ -145,14 +144,18 @@ export async function bookFlight(
   });
 
   if (!offerRes.ok) {
-    logger.error({ status: offerRes.status, offerId }, 'Failed to fetch offer before booking');
-    return null;
+    const body = await offerRes.text();
+    logger.error({ status: offerRes.status, offerId, body }, 'Failed to fetch offer before booking');
+    // 404 means the offer is gone (expired/no longer available) — caller can retry with fresh search
+    if (offerRes.status === 404) return null;
+    throw new Error(`Duffel API error fetching offer (HTTP ${offerRes.status}): ${body}`);
   }
 
   const { data: offer } = (await offerRes.json()) as { data: DuffelOfferRaw };
 
   if (new Date(offer.expires_at) <= new Date()) {
     logger.warn({ offerId }, 'Offer expired before booking could complete');
+    // Return null so caller can retry with a fresh search
     return null;
   }
 
@@ -191,7 +194,7 @@ export async function bookFlight(
     if (!orderRes.ok) {
       const body = await orderRes.text();
       logger.error({ status: orderRes.status, body }, 'Duffel order creation failed');
-      return null;
+      throw new Error(`Flight booking failed (Duffel HTTP ${orderRes.status}): ${body}`);
     }
 
     const { data: order } = (await orderRes.json()) as {
