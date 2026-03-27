@@ -3,4 +3,4 @@ dist/
 .env
 *.log
 .DS_Store
-drizzle/meta/
+# drizzle/meta/ is intentionally tracked — _journal.json is required at runtime
