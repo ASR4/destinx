@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { searchHotels } from '../search/hotels.js';
-import { searchFlights, bookFlight, type FlightSearchParams, type DuffelPassenger } from '../search/flights.js';
+import { searchFlights, bookFlight, searchAndBookFlight, type FlightSearchParams, type DuffelPassenger } from '../search/flights.js';
 import { searchRestaurants } from '../search/restaurants.js';
 import { searchExperiences } from '../search/experiences.js';
 import { searchTransport } from '../search/transport.js';
@@ -144,17 +144,48 @@ const TOOL_HANDLERS: Record<
 
   book_flight: async (input) => {
     const offerId = input.offer_id as string;
-    const passengers = (input.passengers as DuffelPassenger[]);
-    const result = await bookFlight(offerId, passengers);
-    if (!result) {
-      return { status: 'failed', error: 'Flight booking failed — offer may have expired. Please search again.' };
+    const passengers = input.passengers as DuffelPassenger[];
+
+    // First attempt: use the original offer ID
+    const directResult = await bookFlight(offerId, passengers);
+    if (directResult) {
+      return {
+        status: 'confirmed',
+        bookingReference: directResult.bookingReference,
+        orderId: directResult.orderId,
+        totalAmount: directResult.totalAmount,
+        totalCurrency: directResult.totalCurrency,
+      };
     }
+
+    // Offer expired — retry with fresh search if we have flight context
+    const flightNumber = input.flight_number as string | undefined;
+    const origin = input.origin as string | undefined;
+    const destination = input.destination as string | undefined;
+    const departureDate = input.departure_date as string | undefined;
+
+    if (flightNumber && origin && destination && departureDate) {
+      logger.info({ flightNumber }, 'Offer expired, re-searching for fresh offer');
+      const retryResult = await searchAndBookFlight(
+        { flightNumber, origin, destination, departureDate },
+        passengers,
+        input.cabin_class as FlightSearchParams['cabinClass'],
+      );
+      if (retryResult) {
+        return {
+          status: 'confirmed',
+          bookingReference: retryResult.bookingReference,
+          orderId: retryResult.orderId,
+          totalAmount: retryResult.totalAmount,
+          totalCurrency: retryResult.totalCurrency,
+          note: `Price at booking: ${retryResult.price.amount} ${retryResult.price.currency}`,
+        };
+      }
+    }
+
     return {
-      status: 'confirmed',
-      bookingReference: result.bookingReference,
-      orderId: result.orderId,
-      totalAmount: result.totalAmount,
-      totalCurrency: result.totalCurrency,
+      status: 'failed',
+      error: 'Flight booking failed — offer expired and retry could not find the same flight. Please search again.',
     };
   },
 

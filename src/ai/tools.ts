@@ -200,13 +200,33 @@ export function getTravelAgentTools(): Tool[] {
     {
       name: 'book_flight',
       description:
-        'Book a flight using the Duffel API. Requires an offerId from search_flights and passenger details. Collect all passenger info before calling.',
+        'Book a flight using the Duffel API. Requires an offerId from search_flights and passenger details. ALWAYS include the flight_number, origin, destination, and departure_date so the system can auto-retry if the offer expires.',
       input_schema: {
         type: 'object' as const,
         properties: {
           offer_id: {
             type: 'string',
             description: 'The Duffel offer ID from search_flights results.',
+          },
+          flight_number: {
+            type: 'string',
+            description: 'Flight number e.g. AI2710 — needed for auto-retry if offer expires.',
+          },
+          origin: {
+            type: 'string',
+            description: 'IATA origin code from the search.',
+          },
+          destination: {
+            type: 'string',
+            description: 'IATA destination code from the search.',
+          },
+          departure_date: {
+            type: 'string',
+            description: 'YYYY-MM-DD departure date.',
+          },
+          cabin_class: {
+            type: 'string',
+            enum: ['economy', 'premium_economy', 'business', 'first'],
           },
           passengers: {
             type: 'array',
@@ -243,7 +263,7 @@ export function getTravelAgentTools(): Tool[] {
             description: 'One entry per passenger.',
           },
         },
-        required: ['offer_id', 'passengers'],
+        required: ['offer_id', 'passengers', 'flight_number', 'origin', 'destination', 'departure_date'],
       },
     },
     {

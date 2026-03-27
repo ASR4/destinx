@@ -220,6 +220,44 @@ export async function bookFlight(
   }
 }
 
+/**
+ * Search-and-book: re-searches for the same flight, finds a fresh offer
+ * matching the original flight number, and books it in one shot.
+ * This handles the common case where the original offer expired while
+ * Claude was collecting passenger details.
+ */
+export async function searchAndBookFlight(
+  originalOffer: { flightNumber: string; origin: string; destination: string; departureDate: string },
+  passengers: DuffelPassenger[],
+  cabinClass?: FlightSearchParams['cabinClass'],
+): Promise<FlightBookingResult & { price: { amount: number; currency: string } } | null> {
+  logger.info({ flight: originalOffer.flightNumber }, 'Re-searching for fresh offer before booking');
+
+  const freshOffers = await searchFlights({
+    origin: originalOffer.origin,
+    destination: originalOffer.destination,
+    departureDate: originalOffer.departureDate,
+    passengers: passengers.length,
+    cabinClass,
+  });
+
+  const match = freshOffers.find((o) => o.flightNumber === originalOffer.flightNumber);
+  if (!match) {
+    logger.warn({ flight: originalOffer.flightNumber }, 'Original flight no longer available in fresh search');
+    return null;
+  }
+
+  logger.info(
+    { offerId: match.offerId, price: match.price, flight: match.flightNumber },
+    'Found fresh offer, booking immediately',
+  );
+
+  const result = await bookFlight(match.offerId, passengers);
+  if (!result) return null;
+
+  return { ...result, price: match.price };
+}
+
 // ── Internal Duffel response types ───────────────────────────────────
 
 interface DuffelOfferRaw {
