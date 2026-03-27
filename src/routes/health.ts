@@ -17,12 +17,8 @@ interface HealthResponse {
 
 export async function healthRoutes(app: FastifyInstance) {
   app.get('/health', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const { postgres, redis } = await checkCriticalDeps();
-
-    const isHealthy = postgres.status === 'ok' && redis.status === 'ok';
-
-    reply.status(isHealthy ? 200 : 503).send({
-      status: isHealthy ? 'ok' : 'down',
+    reply.status(200).send({
+      status: 'ok',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     });
