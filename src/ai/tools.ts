@@ -200,13 +200,26 @@ export function getTravelAgentTools(): Tool[] {
     {
       name: 'book_flight',
       description:
-        'Book a flight using the Duffel API. Requires an offerId from search_flights and passenger details. ALWAYS include the flight_number, origin, destination, and departure_date so the system can auto-retry if the offer expires.',
+        'Book a flight using the Duffel API. ALWAYS pass the passenger_ids, raw_amount, and raw_currency from the search_flights results along with the offer_id — this avoids re-fetching and prevents offer expiry. Also include flight_number, origin, destination, departure_date for auto-retry.',
       input_schema: {
         type: 'object' as const,
         properties: {
           offer_id: {
             type: 'string',
-            description: 'The Duffel offer ID from search_flights results.',
+            description: 'The Duffel offer ID from search_flights results (offerId field).',
+          },
+          passenger_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'The passengerIds array from search_flights results — pass it exactly as received.',
+          },
+          raw_amount: {
+            type: 'string',
+            description: 'The rawAmount string from search_flights results (e.g. "342.90").',
+          },
+          raw_currency: {
+            type: 'string',
+            description: 'The rawCurrency string from search_flights results (e.g. "GBP").',
           },
           flight_number: {
             type: 'string',
@@ -263,7 +276,7 @@ export function getTravelAgentTools(): Tool[] {
             description: 'One entry per passenger.',
           },
         },
-        required: ['offer_id', 'passengers', 'flight_number', 'origin', 'destination', 'departure_date'],
+        required: ['offer_id', 'passenger_ids', 'raw_amount', 'raw_currency', 'passengers', 'flight_number', 'origin', 'destination', 'departure_date'],
       },
     },
     {

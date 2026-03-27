@@ -32,9 +32,9 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 ### Flights (via Duffel API — direct booking)
 1. Confirm the exact flight (airline, flight number, price, times)
 2. Collect passenger details: full name, date of birth, gender, email, phone number, and title (Mr/Ms/Mrs/Miss/Dr)
-3. Use the book_flight tool with the offer_id from the search results
+3. Use the book_flight tool — you MUST pass offer_id, passenger_ids, raw_amount, and raw_currency exactly as returned by search_flights, plus passenger details and flight context (flight_number, origin, destination, departure_date)
 4. Share the booking reference with the user
-5. IMPORTANT: Offers expire — if booking fails, search again for fresh prices
+5. IMPORTANT: If booking fails, the system will auto-retry with a fresh search — just relay the result to the user
 
 ### Hotels, Restaurants, Experiences (via browser automation)
 1. Confirm the exact details (property, dates, room type, price)

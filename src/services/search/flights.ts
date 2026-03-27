@@ -26,6 +26,9 @@ export interface FlightOffer {
     refundable: boolean;
     changeable: boolean;
   };
+  passengerIds: string[];
+  rawAmount: string;
+  rawCurrency: string;
 }
 
 export interface FlightSearchParams {
@@ -125,102 +128,78 @@ export async function searchFlights(
 
 /**
  * Book a flight using a Duffel offer ID obtained from searchFlights.
- * Always re-fetches the offer immediately before booking to confirm the live price.
- * Uses Duffel Balance payment — ensure your Duffel account is funded.
- * NOTE: This request can take up to 120s due to airline system latency.
+ * Uses the passenger IDs and price from the search response directly — no
+ * re-fetch — to eliminate the race condition where Duffel test-mode offers
+ * expire within seconds.
  */
 export async function bookFlight(
-  offerId: string,
+  offer: { offerId: string; passengerIds: string[]; rawAmount: string; rawCurrency: string },
   passengers: DuffelPassenger[],
 ): Promise<FlightBookingResult | null> {
   if (!process.env.DUFFEL_API_KEY) {
     throw new Error('Flight booking is not available — DUFFEL_API_KEY is not configured on this server.');
   }
 
-  // Always re-fetch the offer immediately before booking to get the live price
-  logger.info({ offerId }, 'Fetching fresh offer before booking');
-  const offerRes = await fetch(`${DUFFEL_BASE}/air/offers/${offerId}`, {
-    headers: duffelHeaders(),
-  });
-
-  if (!offerRes.ok) {
-    const body = await offerRes.text();
-    logger.error({ status: offerRes.status, offerId, body }, 'Failed to fetch offer before booking');
-    // 404 means the offer is gone (expired/no longer available) — caller can retry with fresh search
-    if (offerRes.status === 404) return null;
-    throw new Error(`Duffel API error fetching offer (HTTP ${offerRes.status}): ${body}`);
-  }
-
-  const { data: offer } = (await offerRes.json()) as { data: DuffelOfferRaw };
-
-  if (new Date(offer.expires_at) <= new Date()) {
-    logger.warn({ offerId }, 'Offer expired before booking could complete');
-    // Return null so caller can retry with a fresh search
-    return null;
-  }
-
-  // Map our passenger structs onto the offer's passenger IDs
   const orderPassengers = passengers.map((p, i) => ({
-    id: offer.passengers[i]!.id,
+    id: offer.passengerIds[i]!,
     ...p,
   }));
 
   logger.info(
-    { offerId, amount: offer.total_amount, currency: offer.total_currency },
-    'Creating Duffel order',
+    { offerId: offer.offerId, amount: offer.rawAmount, currency: offer.rawCurrency },
+    'Creating Duffel order (no re-fetch)',
   );
 
-  try {
-    const orderRes = await fetch(`${DUFFEL_BASE}/air/orders`, {
-      method: 'POST',
-      headers: duffelHeaders(),
-      body: JSON.stringify({
-        data: {
-          type: 'instant',
-          selected_offers: [offerId],
-          payments: [
-            {
-              type: 'balance',
-              currency: offer.total_currency,
-              amount: offer.total_amount,
-            },
-          ],
-          passengers: orderPassengers,
-        },
-      }),
-      // Signal: caller (BullMQ worker) must use a 130s+ timeout
-    });
-
-    if (!orderRes.ok) {
-      const body = await orderRes.text();
-      logger.error({ status: orderRes.status, body }, 'Duffel order creation failed');
-      throw new Error(`Flight booking failed (Duffel HTTP ${orderRes.status}): ${body}`);
-    }
-
-    const { data: order } = (await orderRes.json()) as {
+  const orderRes = await fetch(`${DUFFEL_BASE}/air/orders`, {
+    method: 'POST',
+    headers: duffelHeaders(),
+    body: JSON.stringify({
       data: {
-        id: string;
-        booking_reference: string;
-        total_amount: string;
-        total_currency: string;
-      };
-    };
+        type: 'instant',
+        selected_offers: [offer.offerId],
+        payments: [
+          {
+            type: 'balance',
+            currency: offer.rawCurrency,
+            amount: offer.rawAmount,
+          },
+        ],
+        passengers: orderPassengers,
+      },
+    }),
+  });
 
-    logger.info(
-      { orderId: order.id, ref: order.booking_reference },
-      'Flight booked successfully via Duffel',
-    );
+  if (!orderRes.ok) {
+    const body = await orderRes.text();
+    logger.error({ status: orderRes.status, body }, 'Duffel order creation failed');
 
-    return {
-      orderId: order.id,
-      bookingReference: order.booking_reference,
-      totalAmount: order.total_amount,
-      totalCurrency: order.total_currency,
-    };
-  } catch (err) {
-    logger.error({ err }, 'Flight booking failed');
-    return null;
+    // Duffel returns 422 with "offer has expired" when the offer is no longer valid
+    const isExpired = orderRes.status === 422 && body.includes('expired');
+    if (isExpired) return null;
+
+    throw new Error(`Flight booking failed (Duffel HTTP ${orderRes.status}): ${body}`);
   }
+
+  const { data: order } = (await orderRes.json()) as {
+    data: {
+      id: string;
+      booking_reference: string;
+      total_amount: string;
+      total_currency: string;
+    };
+  };
+
+  logger.info(
+    { orderId: order.id, ref: order.booking_reference },
+    'Flight booked successfully via Duffel',
+  );
+
+  return {
+    orderId: order.id,
+    bookingReference: order.booking_reference,
+    totalAmount: order.total_amount,
+    totalCurrency: order.total_currency,
+  };
 }
 
 /**
@@ -255,7 +234,15 @@ export async function searchAndBookFlight(
     'Found fresh offer, booking immediately',
   );
 
-  const result = await bookFlight(match.offerId, passengers);
+  const result = await bookFlight(
+    {
+      offerId: match.offerId,
+      passengerIds: match.passengerIds,
+      rawAmount: match.rawAmount,
+      rawCurrency: match.rawCurrency,
+    },
+    passengers,
+  );
   if (!result) return null;
 
   return { ...result, price: match.price };
@@ -316,6 +303,9 @@ function mapDuffelOffer(offer: DuffelOfferRaw): FlightOffer {
       refundable: offer.conditions.refund_before_departure?.allowed ?? false,
       changeable: offer.conditions.change_before_departure?.allowed ?? false,
     },
+    passengerIds: offer.passengers.map((p) => p.id),
+    rawAmount: offer.total_amount,
+    rawCurrency: offer.total_currency,
   };
 }
 

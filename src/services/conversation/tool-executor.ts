@@ -145,29 +145,35 @@ const TOOL_HANDLERS: Record<
   book_flight: async (input) => {
     const offerId = input.offer_id as string;
     const passengers = input.passengers as DuffelPassenger[];
+    const passengerIds = input.passenger_ids as string[] | undefined;
+    const rawAmount = input.raw_amount as string | undefined;
+    const rawCurrency = input.raw_currency as string | undefined;
 
-    // First attempt: use the original offer ID.
-    // bookFlight() throws on non-retriable errors (missing API key, Duffel API errors).
-    // It returns null only when the offer has expired — which we can retry.
-    const directResult = await bookFlight(offerId, passengers);
-    if (directResult) {
-      return {
-        status: 'confirmed',
-        bookingReference: directResult.bookingReference,
-        orderId: directResult.orderId,
-        totalAmount: directResult.totalAmount,
-        totalCurrency: directResult.totalCurrency,
-      };
-    }
-
-    // Offer expired — retry with fresh search if we have enough context
     const flightNumber = input.flight_number as string | undefined;
     const origin = input.origin as string | undefined;
     const destination = input.destination as string | undefined;
     const departureDate = input.departure_date as string | undefined;
 
+    // If we have passenger IDs and price from the search response, book directly
+    if (passengerIds?.length && rawAmount && rawCurrency) {
+      const directResult = await bookFlight(
+        { offerId, passengerIds, rawAmount, rawCurrency },
+        passengers,
+      );
+      if (directResult) {
+        return {
+          status: 'confirmed',
+          bookingReference: directResult.bookingReference,
+          orderId: directResult.orderId,
+          totalAmount: directResult.totalAmount,
+          totalCurrency: directResult.totalCurrency,
+        };
+      }
+    }
+
+    // Either no IDs were passed or the offer expired — retry with fresh search
     if (flightNumber && origin && destination && departureDate) {
-      logger.info({ flightNumber }, 'Offer expired, re-searching for fresh offer');
+      logger.info({ flightNumber }, 'Offer expired or missing IDs, re-searching for fresh offer');
       const retryResult = await searchAndBookFlight(
         { flightNumber, origin, destination, departureDate },
         passengers,
