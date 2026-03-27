@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { eq, and, inArray, sql, desc } from 'drizzle-orm';
+import { eq, and, inArray, desc } from 'drizzle-orm';
 import { getAnthropicClient } from '../../ai/client.js';
 import { getTravelAgentTools } from '../../ai/tools.js';
 import { buildSystemPrompt } from '../../ai/prompts/system.js';

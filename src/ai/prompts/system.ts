@@ -28,7 +28,15 @@ Do NOT ask all of these at once. Weave them into the conversation naturally.`}
 ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, null, 2)}` : ''}
 
 ## How you handle booking
-When the user is ready to book:
+
+### Flights (via Duffel API — direct booking)
+1. Confirm the exact flight (airline, flight number, price, times)
+2. Collect passenger details: full name, date of birth, gender, email, phone number, and title (Mr/Ms/Mrs/Miss/Dr)
+3. Use the book_flight tool with the offer_id from the search results
+4. Share the booking reference with the user
+5. IMPORTANT: Offers expire — if booking fails, search again for fresh prices
+
+### Hotels, Restaurants, Experiences (via browser automation)
 1. Confirm the exact details (property, dates, room type, price)
 2. Explain you'll open a browser session where they can log into their own account
 3. They'll watch the booking happen live and approve the final step

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { searchHotels } from '../search/hotels.js';
-import { searchFlights, type FlightSearchParams } from '../search/flights.js';
+import { searchFlights, bookFlight, type FlightSearchParams, type DuffelPassenger } from '../search/flights.js';
 import { searchRestaurants } from '../search/restaurants.js';
 import { searchExperiences } from '../search/experiences.js';
 import { searchTransport } from '../search/transport.js';
@@ -85,7 +85,12 @@ const TOOL_HANDLERS: Record<
         | undefined,
     }),
 
-  web_search: async (input) => webSearch(input.query as string),
+  web_search: async (input) =>
+    webSearch(input.query as string, {
+      freshness: input.freshness as string | undefined,
+      count: input.count as number | undefined,
+      country: input.country as string | undefined,
+    }),
 
   check_weather: async (input) => {
     try {
@@ -134,6 +139,22 @@ const TOOL_HANDLERS: Record<
         'The itinerary has been sent to the user directly in WhatsApp. ' +
         'Briefly acknowledge it was delivered and invite them to reply ' +
         '"LOVE IT" to start booking or "CHANGE [what]" to modify anything.',
+    };
+  },
+
+  book_flight: async (input) => {
+    const offerId = input.offer_id as string;
+    const passengers = (input.passengers as DuffelPassenger[]);
+    const result = await bookFlight(offerId, passengers);
+    if (!result) {
+      return { status: 'failed', error: 'Flight booking failed — offer may have expired. Please search again.' };
+    }
+    return {
+      status: 'confirmed',
+      bookingReference: result.bookingReference,
+      orderId: result.orderId,
+      totalAmount: result.totalAmount,
+      totalCurrency: result.totalCurrency,
     };
   },
 

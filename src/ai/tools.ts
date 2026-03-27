@@ -128,11 +128,27 @@ export function getTravelAgentTools(): Tool[] {
     {
       name: 'web_search',
       description:
-        'Search the web for current information about a destination, event, restaurant, or travel topic.',
+        'Search the web for current information about destinations, events, visa requirements, travel advisories, weather, costs, or any travel topic. Returns rich snippets.',
       input_schema: {
         type: 'object' as const,
         properties: {
-          query: { type: 'string' },
+          query: {
+            type: 'string',
+            description: 'Search query (max 400 chars). Be specific for better results.',
+          },
+          freshness: {
+            type: 'string',
+            description:
+              'Filter by recency: "pd" (past day), "pw" (past week), "pm" (past month), "py" (past year), or "YYYY-MM-DDtoYYYY-MM-DD" for a custom range.',
+          },
+          count: {
+            type: 'number',
+            description: 'Number of results (1-20, default 5).',
+          },
+          country: {
+            type: 'string',
+            description: 'Two-letter country code to localize results (e.g. US, GB, JP).',
+          },
         },
         required: ['query'],
       },
@@ -182,15 +198,64 @@ export function getTravelAgentTools(): Tool[] {
       },
     },
     {
+      name: 'book_flight',
+      description:
+        'Book a flight using the Duffel API. Requires an offerId from search_flights and passenger details. Collect all passenger info before calling.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          offer_id: {
+            type: 'string',
+            description: 'The Duffel offer ID from search_flights results.',
+          },
+          passengers: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                given_name: { type: 'string' },
+                family_name: { type: 'string' },
+                born_on: {
+                  type: 'string',
+                  description: 'Date of birth YYYY-MM-DD',
+                },
+                gender: { type: 'string', enum: ['m', 'f'] },
+                email: { type: 'string' },
+                phone_number: {
+                  type: 'string',
+                  description: 'E.164 format e.g. +14155552671',
+                },
+                title: {
+                  type: 'string',
+                  enum: ['mr', 'ms', 'mrs', 'miss', 'dr'],
+                },
+              },
+              required: [
+                'given_name',
+                'family_name',
+                'born_on',
+                'gender',
+                'email',
+                'phone_number',
+                'title',
+              ],
+            },
+            description: 'One entry per passenger.',
+          },
+        },
+        required: ['offer_id', 'passengers'],
+      },
+    },
+    {
       name: 'initiate_booking',
       description:
-        'Start the browser-based booking process. This opens a live session the user can watch.',
+        'Start a browser-based booking process for hotels, restaurants, or experiences. Opens a live session the user can watch. Do NOT use this for flights — use book_flight instead.',
       input_schema: {
         type: 'object' as const,
         properties: {
           booking_type: {
             type: 'string',
-            enum: ['hotel', 'flight', 'restaurant', 'experience'],
+            enum: ['hotel', 'restaurant', 'experience'],
           },
           provider: {
             type: 'string',
