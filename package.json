@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
-    "start": "npx drizzle-kit push --force && node dist/index.js",
+    "start": "npx drizzle-kit push --force || echo 'drizzle-kit push failed, continuing...'; node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
