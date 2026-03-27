@@ -20,21 +20,30 @@ async function ensureDbExtensionsAndConstraints() {
     await sql`CREATE EXTENSION IF NOT EXISTS vector`;
     logger.info('pgvector extension ensured');
 
-    // Deduplicate user_preferences before adding unique constraint
+    // Deduplicate user_preferences then add unique constraint
     // (drizzle-kit push can't do this non-interactively)
-    await sql`
-      DELETE FROM user_preferences a USING user_preferences b
-      WHERE a.id > b.id
-        AND a.user_id = b.user_id
-        AND a.category = b.category
-        AND a.key = b.key
+    const existing = await sql`
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'user_preferences_user_id_category_key_unique'
+      LIMIT 1
     `;
-    await sql`
-      ALTER TABLE user_preferences
-      ADD CONSTRAINT IF NOT EXISTS user_preferences_user_id_category_key_unique
-      UNIQUE (user_id, category, key)
-    `;
-    logger.info('user_preferences unique constraint ensured');
+    if (existing.length === 0) {
+      await sql`
+        DELETE FROM user_preferences a USING user_preferences b
+        WHERE a.created_at > b.created_at
+          AND a.user_id = b.user_id
+          AND a.category = b.category
+          AND a.key = b.key
+      `;
+      await sql`
+        ALTER TABLE user_preferences
+        ADD CONSTRAINT user_preferences_user_id_category_key_unique
+        UNIQUE (user_id, category, key)
+      `;
+      logger.info('user_preferences unique constraint added');
+    } else {
+      logger.info('user_preferences unique constraint already exists');
+    }
   } catch (err) {
     logger.warn({ err }, 'DB setup warning (non-fatal)');
   } finally {
