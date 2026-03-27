@@ -92,7 +92,7 @@ export async function processMessage(
         name: b.name,
         input: b.input as Record<string, unknown>,
       })),
-      { userId, userPhone: options.userPhone },
+      { userId, conversationId, userPhone: options.userPhone },
     );
 
     claudeMessages = [
