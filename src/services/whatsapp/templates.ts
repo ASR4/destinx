@@ -139,8 +139,9 @@ export async function ensureTemplates(): Promise<void> {
         status: 'pending',
       });
       logger.info({ name, sid: created.sid }, 'Template created');
-    } catch (err) {
-      logger.error({ err, name }, 'Failed to ensure template — plain text fallback will be used');
+    } catch (err: any) {
+      const detail = err?.message ?? err?.code ?? String(err);
+      logger.error(`Failed to ensure template [${name}]: ${detail}`);
     }
   }
 }
