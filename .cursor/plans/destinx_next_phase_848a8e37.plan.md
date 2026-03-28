@@ -32,8 +32,14 @@ todos:
   - id: booking-com-provider
     content: "Implement Booking.com browser booking provider (highest impact hotel provider)"
     status: pending
+  - id: google-reserve-links
+    content: "Add reservationUri to Google Places restaurant search — instant reservation links with zero browser automation"
+    status: pending
+  - id: resy-provider
+    content: "Implement Resy API integration for direct restaurant reservations (high-end restaurants)"
+    status: pending
   - id: opentable-provider
-    content: "Implement OpenTable restaurant booking provider"
+    content: "Implement OpenTable browser booking provider as fallback for restaurants not on Resy or Google Reserve"
     status: pending
   - id: viator-provider
     content: "Implement Viator experience booking provider"
@@ -202,9 +208,18 @@ Highest impact — widest inventory, no loyalty login needed.
 - Navigate -> search -> select room -> pause for user payment -> extract confirmation
 - Add to `executeProviderFlow` switch in [src/services/booking/orchestrator.ts](src/services/booking/orchestrator.ts)
 
-### 3.3 OpenTable Restaurant Provider
+### 3.3 Restaurant Reservation — Multi-Provider Strategy
 
-- Implement [src/services/booking/providers/opentable.ts](src/services/booking/providers/opentable.ts)
+Restaurants need a layered approach because no single platform covers all inventory:
+
+**Layer 1 — Google Reserve links (quick win, no code)**
+Google Places API (New) returns a `reservationUri` field for restaurants that support Google Reserve (which routes to OpenTable, Resy, or the restaurant's own system). Add `places.reservationUri` to the `X-Goog-FieldMask` in [src/services/search/restaurants.ts](src/services/search/restaurants.ts) and surface it in the `RestaurantResult` interface. Claude can share this link directly — zero browser automation needed.
+
+**Layer 2 — Resy API (direct integration for high-end restaurants)**
+Resy has a public API. Implement `src/services/search/resy.ts` with `searchResyRestaurants()` and `bookResyReservation()`. Add a `reserve_restaurant` tool to [src/ai/tools.ts](src/ai/tools.ts) that books directly via the API (similar to how `book_flight` works with Duffel). Add `RESY_API_KEY` to [src/config/env.ts](src/config/env.ts) as optional.
+
+**Layer 3 — OpenTable browser automation (fallback for restaurants not on Resy or Google Reserve)**
+- Implement [src/services/booking/providers/opentable.ts](src/services/booking/providers/opentable.ts) following the Marriott browser pattern
 - Search -> select time slot -> pause for user login/details -> confirm
 
 ### 3.4 Viator Experience Provider
@@ -237,7 +252,7 @@ Create `src/services/booking/provider-selector.ts` — deterministic logic:
 
 - Hotel matches known chain + user has loyalty -> use chain site (Marriott.com)
 - Otherwise -> Booking.com
-- Restaurants -> OpenTable
+- Restaurants -> Google Reserve link if `reservationUri` exists, else Resy API if available, else OpenTable browser automation
 - Experiences -> Viator
 - **Deep link fallback**: When browser automation fails or a provider is not yet implemented, fall back to pre-filled deep links from [src/utils/deeplink.ts](src/utils/deeplink.ts) (already built). The selector should return `{ method: 'browser' | 'deeplink', provider, url }` so the orchestrator can route accordingly.
 
@@ -351,7 +366,9 @@ graph TD
     subgraph phase3 [Phase 3: Browser Automation]
         H["Browserbase setup + waitForLogin hardening"]
         I["Booking.com provider"]
-        J[OpenTable provider]
+        J0["Google Reserve links (quick win)"]
+        J1[Resy API]
+        J2[OpenTable browser fallback]
         K[Viator provider]
         K2[Airbnb provider]
         K3[CAPTCHA fallback]
