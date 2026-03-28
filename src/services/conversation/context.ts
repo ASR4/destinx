@@ -1,22 +1,26 @@
-import { eq, asc, desc } from 'drizzle-orm';
+import type Anthropic from '@anthropic-ai/sdk';
+import { eq, desc } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import { messages } from '../../db/schema.js';
 import { CONVERSATION } from '../../config/constants.js';
-import { logger } from '../../utils/logger.js';
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+type MessageParam = Anthropic.Messages.MessageParam;
 
 /**
- * Load the last N messages for a conversation, formatted for Claude.
- * Queries the messages table ordered by created_at, returns a sliding window.
+ * Load the last N messages for a conversation, formatted for the Claude API.
+ *
+ * Returns full Anthropic MessageParam format:
+ *  - text messages  → { role, content: string }
+ *  - tool_call msgs → { role: 'assistant', content: ContentBlock[] }
+ *  - tool_result    → { role: 'user', content: ToolResultBlock[] }
+ *
+ * This preserves tool-use context across turns so Claude can reference
+ * earlier search results (e.g. searchId) without hallucinating.
  */
 export async function getConversationHistory(
   conversationId: string,
   options?: { limit?: number },
-): Promise<ChatMessage[]> {
+): Promise<MessageParam[]> {
   const limit = options?.limit ?? CONVERSATION.MAX_HISTORY_MESSAGES;
   const db = getDb();
 
@@ -24,6 +28,7 @@ export async function getConversationHistory(
     .select({
       role: messages.role,
       content: messages.content,
+      messageType: messages.messageType,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -36,10 +41,22 @@ export async function getConversationHistory(
 
   return rows
     .filter((r) => r.role === 'user' || r.role === 'assistant')
-    .map((r) => ({
-      role: r.role as 'user' | 'assistant',
-      content: r.content,
-    }));
+    .map((r): MessageParam => {
+      const role = r.role as 'user' | 'assistant';
+
+      // Tool exchanges are stored as JSON-encoded Anthropic content blocks
+      if (r.messageType === 'tool_call' || r.messageType === 'tool_result') {
+        try {
+          return { role, content: JSON.parse(r.content) };
+        } catch {
+          // Corrupted JSON — degrade to plain text
+          return { role, content: r.content };
+        }
+      }
+
+      // Regular text messages
+      return { role, content: r.content };
+    });
 }
 
 /**
@@ -48,11 +65,16 @@ export async function getConversationHistory(
  */
 export async function buildContextWindow(
   conversationId: string,
-): Promise<{ messages: ChatMessage[]; estimatedTokens: number }> {
+): Promise<{ messages: MessageParam[]; estimatedTokens: number }> {
   const history = await getConversationHistory(conversationId);
 
   const estimatedTokens = history.reduce(
-    (sum, m) => sum + Math.ceil(m.content.length / 4),
+    (sum, m) => {
+      const content = typeof m.content === 'string'
+        ? m.content
+        : JSON.stringify(m.content);
+      return sum + Math.ceil(content.length / 4);
+    },
     0,
   );
 

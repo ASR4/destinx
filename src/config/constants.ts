@@ -9,7 +9,7 @@ export const WHATSAPP = {
 } as const;
 
 export const CONVERSATION = {
-  MAX_HISTORY_MESSAGES: 20,
+  MAX_HISTORY_MESSAGES: 50,
   MAX_CONTEXT_TOKENS: 8000,
   TYPING_INDICATOR_TEXT: '✈️ Let me look into that...',
   HOLDING_MESSAGE_DELAY_MS: 8_000,

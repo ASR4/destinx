@@ -10,7 +10,7 @@ import { getNextState, isConfirmationInState } from './state-machine.js';
 import { executeToolCalls, getHoldingMessage } from './tool-executor.js';
 import { memoryQueue } from '../../jobs/queue.js';
 import { getDb } from '../../db/client.js';
-import { conversations, trips } from '../../db/schema.js';
+import { conversations, messages, trips } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
 import { AI, CONVERSATION } from '../../config/constants.js';
 import type { ConversationFSMState } from '../../config/constants.js';
@@ -98,18 +98,39 @@ export async function processMessage(
       { userId, conversationId, userPhone: options.userPhone },
     );
 
+    const toolResultContent = toolResults.map((tr) => ({
+      type: 'tool_result' as const,
+      tool_use_id: tr.toolUseId,
+      content: tr.result,
+    }));
+
     claudeMessages = [
       ...claudeMessages,
       { role: 'assistant' as const, content: response.content },
-      {
-        role: 'user' as const,
-        content: toolResults.map((tr) => ({
-          type: 'tool_result' as const,
-          tool_use_id: tr.toolUseId,
-          content: tr.result,
-        })),
-      },
+      { role: 'user' as const, content: toolResultContent },
     ];
+
+    // Persist tool exchange so subsequent turns see searchIds, flight details, etc.
+    const now = Date.now();
+    getDb()
+      .insert(messages)
+      .values([
+        {
+          conversationId,
+          role: 'assistant',
+          content: JSON.stringify(response.content),
+          messageType: 'tool_call',
+          createdAt: new Date(now),
+        },
+        {
+          conversationId,
+          role: 'user',
+          content: JSON.stringify(toolResultContent),
+          messageType: 'tool_result',
+          createdAt: new Date(now + 1),
+        },
+      ])
+      .catch((err) => logger.error({ err }, 'Failed to persist tool exchange'));
 
     if (response.stop_reason === 'end_turn' && iterText) {
       finalText = iterText;
