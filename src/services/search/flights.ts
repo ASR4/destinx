@@ -131,9 +131,6 @@ export async function searchFlights(
  * Uses the passenger IDs and price from the search response directly — no
  * re-fetch — to eliminate the race condition where Duffel test-mode offers
  * expire within seconds.
- *
- * Returns null on ANY Duffel error so the caller's retry logic always runs.
- * Only throws for truly fatal conditions (missing API key).
  */
 export async function bookFlight(
   offer: { offerId: string; passengerIds: string[]; rawAmount: string; rawCurrency: string },
@@ -153,56 +150,56 @@ export async function bookFlight(
     'Creating Duffel order (no re-fetch)',
   );
 
-  try {
-    const orderRes = await fetch(`${DUFFEL_BASE}/air/orders`, {
-      method: 'POST',
-      headers: duffelHeaders(),
-      body: JSON.stringify({
-        data: {
-          type: 'instant',
-          selected_offers: [offer.offerId],
-          payments: [
-            {
-              type: 'balance',
-              currency: offer.rawCurrency,
-              amount: offer.rawAmount,
-            },
-          ],
-          passengers: orderPassengers,
-        },
-      }),
-    });
-
-    if (!orderRes.ok) {
-      const body = await orderRes.text();
-      logger.error(`Duffel order creation failed: HTTP ${orderRes.status} — ${body}`);
-      return null;
-    }
-
-    const { data: order } = (await orderRes.json()) as {
+  const orderRes = await fetch(`${DUFFEL_BASE}/air/orders`, {
+    method: 'POST',
+    headers: duffelHeaders(),
+    body: JSON.stringify({
       data: {
-        id: string;
-        booking_reference: string;
-        total_amount: string;
-        total_currency: string;
-      };
-    };
+        type: 'instant',
+        selected_offers: [offer.offerId],
+        payments: [
+          {
+            type: 'balance',
+            currency: offer.rawCurrency,
+            amount: offer.rawAmount,
+          },
+        ],
+        passengers: orderPassengers,
+      },
+    }),
+  });
 
-    logger.info(
-      { orderId: order.id, ref: order.booking_reference },
-      'Flight booked successfully via Duffel',
-    );
+  if (!orderRes.ok) {
+    const body = await orderRes.text();
+    logger.error(`Duffel order creation failed: HTTP ${orderRes.status} — ${body}`);
 
-    return {
-      orderId: order.id,
-      bookingReference: order.booking_reference,
-      totalAmount: order.total_amount,
-      totalCurrency: order.total_currency,
-    };
-  } catch (err) {
-    logger.error({ err, offerId: offer.offerId }, 'Duffel order request failed (network/parse error)');
-    return null;
+    // Duffel returns 422 with "offer has expired" when the offer is no longer valid
+    const isExpired = orderRes.status === 422 && body.includes('expired');
+    if (isExpired) return null;
+
+    throw new Error(`Flight booking failed (Duffel HTTP ${orderRes.status}): ${body}`);
   }
+
+  const { data: order } = (await orderRes.json()) as {
+    data: {
+      id: string;
+      booking_reference: string;
+      total_amount: string;
+      total_currency: string;
+    };
+  };
+
+  logger.info(
+    { orderId: order.id, ref: order.booking_reference },
+    'Flight booked successfully via Duffel',
+  );
+
+  return {
+    orderId: order.id,
+    bookingReference: order.booking_reference,
+    totalAmount: order.total_amount,
+    totalCurrency: order.total_currency,
+  };
 }
 
 /**
