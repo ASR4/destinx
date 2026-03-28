@@ -154,48 +154,56 @@ const TOOL_HANDLERS: Record<
     const destination = input.destination as string | undefined;
     const departureDate = input.departure_date as string | undefined;
 
-    // If we have passenger IDs and price from the search response, book directly
+    // Attempt 1: book directly with the provided offer data.
+    // Catch throws so a non-retriable Duffel error doesn't bypass the retry path.
     if (passengerIds?.length && rawAmount && rawCurrency) {
-      const directResult = await bookFlight(
-        { offerId, passengerIds, rawAmount, rawCurrency },
-        passengers,
-      );
-      if (directResult) {
-        return {
-          status: 'confirmed',
-          bookingReference: directResult.bookingReference,
-          orderId: directResult.orderId,
-          totalAmount: directResult.totalAmount,
-          totalCurrency: directResult.totalCurrency,
-        };
+      try {
+        const directResult = await bookFlight(
+          { offerId, passengerIds, rawAmount, rawCurrency },
+          passengers,
+        );
+        if (directResult) {
+          return {
+            status: 'confirmed',
+            bookingReference: directResult.bookingReference,
+            orderId: directResult.orderId,
+            totalAmount: directResult.totalAmount,
+            totalCurrency: directResult.totalCurrency,
+          };
+        }
+        // null → offer expired, fall through to retry
+      } catch (err) {
+        // Non-retriable Duffel error (bad request, account issue, etc.)
+        // Log it and fall through so the isTestMode check can give Claude useful context.
+        logger.warn({ err }, 'Direct booking failed with non-retriable error, checking fallback');
       }
     }
 
-    // Either no IDs were passed or the offer expired — retry with fresh search
+    // Attempt 2: fresh search + immediate book (handles expired offers).
     if (flightNumber && origin && destination && departureDate) {
-      logger.info({ flightNumber }, 'Offer expired or missing IDs, re-searching for fresh offer');
-      const retryResult = await searchAndBookFlight(
-        { flightNumber, origin, destination, departureDate },
-        passengers,
-        input.cabin_class as FlightSearchParams['cabinClass'],
-      );
-      if (retryResult) {
-        return {
-          status: 'confirmed',
-          bookingReference: retryResult.bookingReference,
-          orderId: retryResult.orderId,
-          totalAmount: retryResult.totalAmount,
-          totalCurrency: retryResult.totalCurrency,
-          note: `Price at booking: ${retryResult.price.amount} ${retryResult.price.currency}`,
-        };
+      logger.info({ flightNumber }, 'Re-searching for fresh offer');
+      try {
+        const retryResult = await searchAndBookFlight(
+          { flightNumber, origin, destination, departureDate },
+          passengers,
+          input.cabin_class as FlightSearchParams['cabinClass'],
+        );
+        if (retryResult) {
+          return {
+            status: 'confirmed',
+            bookingReference: retryResult.bookingReference,
+            orderId: retryResult.orderId,
+            totalAmount: retryResult.totalAmount,
+            totalCurrency: retryResult.totalCurrency,
+            note: `Price at booking: ${retryResult.price.amount} ${retryResult.price.currency}`,
+          };
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Retry booking also failed');
       }
-      return {
-        status: 'failed',
-        error: 'The original offer expired and the same flight could not be found in a fresh search. Ask the user if they would like to search for alternatives.',
-      };
     }
 
-    // If we reach here without enough context to retry, check for test mode
+    // Both attempts failed — give Claude actionable context
     const isTestMode = (process.env.DUFFEL_API_KEY ?? '').startsWith('duffel_test');
     if (isTestMode) {
       return {
@@ -208,7 +216,9 @@ const TOOL_HANDLERS: Record<
 
     return {
       status: 'failed',
-      error: 'The flight offer has expired. Ask the user to confirm they still want this flight, then use search_flights to get a fresh offer before booking.',
+      error:
+        'The booking could not be completed — the airline system may be temporarily unavailable. ' +
+        'Apologise and give the user the flight details (airline, flight number, route, date, price) so they can book directly on the airline website.',
     };
   },
 
