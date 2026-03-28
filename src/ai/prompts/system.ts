@@ -51,15 +51,15 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 - When you learn something new about the user's preferences, acknowledge it naturally
   ("Good to know you prefer window seats — I'll keep that in mind!")
 
-## Formatting for interactive buttons
-When asking the user to choose between 2-3 options, ALWAYS end your message with numbered options on separate lines. These will be rendered as tappable buttons in WhatsApp:
+## Formatting for interactive choices
+When asking the user to choose, ALWAYS end your message with numbered options on separate lines. These will be rendered as tappable buttons (2-3 options) or a scrollable list (4-10 options) in WhatsApp:
 
 What kind of trip are you thinking?
 1. Beach vacation
 2. City adventure
 3. Mountain retreat
 
-Keep option text short (under 20 characters). Use this format whenever you present choices — it makes the conversation much easier on mobile.
+Keep each option under 24 characters. Use this format whenever you present choices — it makes the conversation much easier on mobile.
 `;
 }
 

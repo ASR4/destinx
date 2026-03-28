@@ -51,7 +51,7 @@ function parseQuestionWithOptions(
     }
   }
 
-  if (optionLines.length < 2 || optionLines.length > 3) return null;
+  if (optionLines.length < 2 || optionLines.length > 10) return null;
 
   // Everything before the options is the body
   const bodyLines = lines.slice(0, lines.length - optionLines.length);
@@ -101,13 +101,23 @@ export function startWorkers(): void {
           },
         });
 
-        // Detect questions with numbered options and send as interactive buttons
+        // Detect questions with numbered options → buttons (2-3) or list (4-10)
         const parsed = parseQuestionWithOptions(responseText);
-        if (parsed) {
+        if (parsed && parsed.options.length <= 3) {
           const { sendQuestionWithOptions } = await import(
             '../services/whatsapp/templates.js'
           );
           await sendQuestionWithOptions(userPhone, parsed.body, parsed.options);
+        } else if (parsed && parsed.options.length >= 4) {
+          const { sendListMessage } = await import(
+            '../services/whatsapp/sender.js'
+          );
+          await sendListMessage(
+            userPhone,
+            parsed.body,
+            'Choose',
+            [{ title: 'Options', rows: parsed.options.map((o, i) => ({ id: `option_${i + 1}`, title: o.slice(0, 24) })) }],
+          );
         } else {
           await sendText(userPhone, responseText);
         }
