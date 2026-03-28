@@ -5,7 +5,16 @@ import { buildPlanningPrompt } from '../../ai/prompts/planning.js';
 import { recallUserProfile } from '../memory/recall.js';
 import { executeToolCalls } from '../conversation/tool-executor.js';
 import { validateTripPlan, buildStrictPlanPrompt } from './trip-schema.js';
-import { AI, CONVERSATION } from '../../config/constants.js';
+import { AI } from '../../config/constants.js';
+
+/** Max tool-loop iterations for the planner — it only needs a few searches. */
+const MAX_PLANNING_TOOL_ITERATIONS = 4;
+
+/** Tools the planner can use — search only, no booking/planning/save tools. */
+const PLANNING_TOOL_NAMES = new Set([
+  'search_hotels', 'search_flights', 'search_restaurants',
+  'search_experiences', 'search_transport', 'check_weather', 'web_search',
+]);
 import { logger } from '../../utils/logger.js';
 import type { PlanInput, Itinerary } from '../../types/trip.js';
 
@@ -35,14 +44,17 @@ export async function generateTripPlan(
     { role: 'user', content: prompt },
   ];
 
+  // Only give the planner search tools — no booking, planning, or save tools
+  const plannerTools = getTravelAgentTools().filter((t) => PLANNING_TOOL_NAMES.has(t.name));
+
   let rawPlanText = '';
 
-  for (let iteration = 0; iteration < CONVERSATION.MAX_TOOL_LOOP_ITERATIONS; iteration++) {
+  for (let iteration = 0; iteration < MAX_PLANNING_TOOL_ITERATIONS; iteration++) {
     const response = await anthropic.messages.create({
       model: AI.PLANNING_MODEL,
       max_tokens: AI.MAX_PLANNING_TOKENS,
       messages,
-      tools: getTravelAgentTools(),
+      tools: plannerTools,
     });
 
     const toolUseBlocks = response.content.filter(
