@@ -42,7 +42,9 @@ const TEMPLATE_DEFINITIONS = {
       'twilio/list-picker': {
         body: '{{1}}',
         button: 'View Hotels',
-        items: [] as Array<{ id: string; item: string; description: string }>,
+        items: [
+          { id: 'placeholder', item: 'Loading...', description: 'Options will be populated at send time' },
+        ],
       },
     },
     language: 'en',
@@ -66,7 +68,7 @@ const TEMPLATE_DEFINITIONS = {
       'twilio/call-to-action': {
         body: '{{1}}',
         actions: [
-          { title: '🔗 Watch Booking', type: 'URL', url: '{{2}}' },
+          { title: '🔗 Watch Booking', type: 'URL', url: 'https://destinx.app/live/{{2}}' },
         ],
       },
     },
