@@ -30,7 +30,7 @@ export function getTravelAgentTools(): Tool[] {
     {
       name: 'search_flights',
       description:
-        'Search for flights between two airports/cities. Returns real-time pricing from 300+ airlines via Duffel.',
+        'Search for flights between two airports/cities. Returns real-time pricing from 300+ airlines via Duffel. The result includes a searchId — you MUST pass this searchId to book_flight so the booking can use the cached offer without re-fetching.',
       input_schema: {
         type: 'object' as const,
         properties: {
@@ -200,42 +200,29 @@ export function getTravelAgentTools(): Tool[] {
     {
       name: 'book_flight',
       description:
-        'Book a flight using the Duffel API. ALWAYS pass the passenger_ids, raw_amount, and raw_currency from the search_flights results along with the offer_id — this avoids re-fetching and prevents offer expiry. Also include flight_number, origin, destination, departure_date for auto-retry.',
+        'Book a flight using the Duffel API. Pass the search_id returned by search_flights — this lets the system retrieve the cached offer without re-fetching and prevents expiry issues. Also include flight_number, origin, destination, and departure_date for auto-retry in case of a cache miss.',
       input_schema: {
         type: 'object' as const,
         properties: {
-          offer_id: {
+          search_id: {
             type: 'string',
-            description: 'The Duffel offer ID from search_flights results (offerId field).',
-          },
-          passenger_ids: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'The passengerIds array from search_flights results — pass it exactly as received.',
-          },
-          raw_amount: {
-            type: 'string',
-            description: 'The rawAmount string from search_flights results (e.g. "342.90").',
-          },
-          raw_currency: {
-            type: 'string',
-            description: 'The rawCurrency string from search_flights results (e.g. "GBP").',
+            description: 'The searchId returned by search_flights. Required for the primary booking path.',
           },
           flight_number: {
             type: 'string',
-            description: 'Flight number e.g. AI2710 — needed for auto-retry if offer expires.',
+            description: 'Flight number e.g. AI2710 — used to match the cached offer and for auto-retry if cache expires.',
           },
           origin: {
             type: 'string',
-            description: 'IATA origin code from the search.',
+            description: 'IATA origin code from the search — needed for auto-retry fallback.',
           },
           destination: {
             type: 'string',
-            description: 'IATA destination code from the search.',
+            description: 'IATA destination code from the search — needed for auto-retry fallback.',
           },
           departure_date: {
             type: 'string',
-            description: 'YYYY-MM-DD departure date.',
+            description: 'YYYY-MM-DD departure date — needed for auto-retry fallback.',
           },
           cabin_class: {
             type: 'string',
@@ -276,7 +263,7 @@ export function getTravelAgentTools(): Tool[] {
             description: 'One entry per passenger.',
           },
         },
-        required: ['offer_id', 'passenger_ids', 'raw_amount', 'raw_currency', 'passengers', 'flight_number', 'origin', 'destination', 'departure_date'],
+        required: ['search_id', 'passengers', 'flight_number', 'origin', 'destination', 'departure_date'],
       },
     },
     {

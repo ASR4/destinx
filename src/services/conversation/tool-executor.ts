@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { searchHotels } from '../search/hotels.js';
-import { searchFlights, bookFlight, searchAndBookFlight, type FlightSearchParams, type DuffelPassenger } from '../search/flights.js';
+import { searchAndBookFlight, type FlightSearchParams, type DuffelPassenger } from '../search/flights.js';
+import { DuffelFlightProvider } from '../booking/providers/flights/duffel.js';
+import { storeSearchResults, getSearchResults } from '../booking/search-cache.js';
 import { searchRestaurants } from '../search/restaurants.js';
 import { searchExperiences } from '../search/experiences.js';
 import { searchTransport } from '../search/transport.js';
@@ -44,15 +46,39 @@ const TOOL_HANDLERS: Record<
       style: input.style as string | undefined,
     }),
 
-  search_flights: async (input) =>
-    searchFlights({
+  search_flights: async (input, ctx) => {
+    const provider = new DuffelFlightProvider();
+    const result = await provider.search({
       origin: input.origin as string,
       destination: input.destination as string,
       departureDate: input.departure_date as string,
       returnDate: input.return_date as string | undefined,
       passengers: input.passengers as number | undefined,
       cabinClass: input.cabin_class as FlightSearchParams['cabinClass'],
-    }),
+    });
+
+    let searchId: string | undefined;
+    if (ctx.conversationId && result.flights.length > 0) {
+      searchId = await storeSearchResults(ctx.conversationId, provider.name, result.flights);
+    }
+
+    // Return searchId plus a human-readable list; raw Duffel IDs stay in Redis
+    return {
+      searchId,
+      flights: result.flights.map((f) => ({
+        flightNumber: f.flightNumber,
+        airline: f.airline,
+        departure: f.departure,
+        arrival: f.arrival,
+        duration: f.duration,
+        stops: f.stops,
+        price: f.price,
+        cabinClass: f.cabinClass,
+        conditions: f.conditions,
+        expiresAt: f.expiresAt,
+      })),
+    };
+  },
 
   search_restaurants: async (input) =>
     searchRestaurants({
@@ -142,51 +168,51 @@ const TOOL_HANDLERS: Record<
     };
   },
 
-  book_flight: async (input) => {
-    const offerId = input.offer_id as string;
+  book_flight: async (input, ctx) => {
+    const searchId = input.search_id as string | undefined;
     const passengers = input.passengers as DuffelPassenger[];
-    const passengerIds = input.passenger_ids as string[] | undefined;
-    const rawAmount = input.raw_amount as string | undefined;
-    const rawCurrency = input.raw_currency as string | undefined;
-
     const flightNumber = input.flight_number as string | undefined;
     const origin = input.origin as string | undefined;
     const destination = input.destination as string | undefined;
     const departureDate = input.departure_date as string | undefined;
+    const cabinClass = input.cabin_class as FlightSearchParams['cabinClass'];
 
-    // Attempt 1: book directly with the provided offer data.
-    // Catch throws so a non-retriable Duffel error doesn't bypass the retry path.
-    if (passengerIds?.length && rawAmount && rawCurrency) {
+    // Attempt 1: look up cached offer via searchId and book through the provider.
+    if (searchId && ctx.conversationId && flightNumber) {
       try {
-        const directResult = await bookFlight(
-          { offerId, passengerIds, rawAmount, rawCurrency },
-          passengers,
-        );
-        if (directResult) {
-          return {
-            status: 'confirmed',
-            bookingReference: directResult.bookingReference,
-            orderId: directResult.orderId,
-            totalAmount: directResult.totalAmount,
-            totalCurrency: directResult.totalCurrency,
-          };
+        const cached = await getSearchResults(ctx.conversationId, searchId);
+        if (cached) {
+          const matchedOffer = (cached.offers as Array<{ flightNumber: string }>).find(
+            (o) => o.flightNumber === flightNumber,
+          );
+          if (matchedOffer) {
+            const provider = new DuffelFlightProvider();
+            const bookingResult = await provider.book(matchedOffer, passengers);
+            return {
+              status: 'confirmed',
+              bookingReference: bookingResult.bookingReference,
+              orderId: bookingResult.orderId,
+              totalAmount: bookingResult.totalAmount,
+              totalCurrency: bookingResult.totalCurrency,
+            };
+          }
+          logger.warn({ searchId, flightNumber }, 'Flight number not found in cached search results, falling back to fresh search');
+        } else {
+          logger.warn({ searchId }, 'Cache miss for searchId, falling back to fresh search');
         }
-        // null → offer expired, fall through to retry
       } catch (err) {
-        // Non-retriable Duffel error (bad request, account issue, etc.)
-        // Log it and fall through so the isTestMode check can give Claude useful context.
-        logger.warn({ err }, 'Direct booking failed with non-retriable error, checking fallback');
+        logger.warn({ err }, 'Cached-offer booking failed, falling back to fresh search');
       }
     }
 
-    // Attempt 2: fresh search + immediate book (handles expired offers).
+    // Attempt 2: fresh search + immediate book (handles expired offers or cache misses).
     if (flightNumber && origin && destination && departureDate) {
       logger.info({ flightNumber }, 'Re-searching for fresh offer');
       try {
         const retryResult = await searchAndBookFlight(
           { flightNumber, origin, destination, departureDate },
           passengers,
-          input.cabin_class as FlightSearchParams['cabinClass'],
+          cabinClass,
         );
         if (retryResult) {
           return {
