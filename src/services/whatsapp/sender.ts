@@ -29,8 +29,12 @@ export async function sendText(to: string, body: string): Promise<void> {
       from: getFromNumber(),
       to,
     });
-  } catch (err) {
-    logger.error({ err, to }, 'Failed to send WhatsApp text');
+  } catch (err: any) {
+    const code = err?.code ?? err?.status ?? 'unknown';
+    const msg = err?.message ?? String(err);
+    logger.error(
+      `WhatsApp send failed [${code}]: ${msg} (to=${to}, bodyLen=${truncated.length})`,
+    );
     throw err;
   }
 }

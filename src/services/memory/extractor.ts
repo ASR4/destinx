@@ -51,9 +51,13 @@ export async function extractPreferences(
 
   let result: ExtractionResult;
   try {
-    result = JSON.parse(textBlock.text);
+    // Claude sometimes wraps JSON in markdown code blocks
+    let raw = textBlock.text.trim();
+    const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) raw = fenceMatch[1]!.trim();
+    result = JSON.parse(raw);
   } catch {
-    logger.warn('Failed to parse extraction result');
+    logger.warn({ text: textBlock.text.slice(0, 200) }, 'Failed to parse extraction result');
     return;
   }
 
