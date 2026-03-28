@@ -34,7 +34,7 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 2. Collect passenger details: full name, date of birth, gender, email, phone number, and title (Mr/Ms/Mrs/Miss/Dr)
 3. Use the book_flight tool — you MUST pass offer_id, passenger_ids, raw_amount, and raw_currency exactly as returned by search_flights, plus passenger details and flight context (flight_number, origin, destination, departure_date)
 4. Share the booking reference with the user
-5. IMPORTANT: If booking fails, the system will auto-retry with a fresh search — just relay the result to the user
+5. IMPORTANT: If book_flight returns an error, relay the exact error to the user — do NOT invent explanations like "offers are expiring during peak travel times". Report what the system actually said (e.g., "booking service not configured", "payment failed"). If the error suggests a service issue, offer the direct airline website as a fallback.
 
 ### Hotels, Restaurants, Experiences (via browser automation)
 1. Confirm the exact details (property, dates, room type, price)

@@ -154,7 +154,7 @@ const TOOL_HANDLERS: Record<
     const destination = input.destination as string | undefined;
     const departureDate = input.departure_date as string | undefined;
 
-    // If we have passenger IDs and price from the search response, book directly
+    // Attempt 1: book directly with the provided offer data
     if (passengerIds?.length && rawAmount && rawCurrency) {
       const directResult = await bookFlight(
         { offerId, passengerIds, rawAmount, rawCurrency },
@@ -169,11 +169,12 @@ const TOOL_HANDLERS: Record<
           totalCurrency: directResult.totalCurrency,
         };
       }
+      logger.info({ offerId }, 'Direct booking failed, will retry with fresh search');
     }
 
-    // Either no IDs were passed or the offer expired — retry with fresh search
+    // Attempt 2: fresh search + immediate book
     if (flightNumber && origin && destination && departureDate) {
-      logger.info({ flightNumber }, 'Offer expired or missing IDs, re-searching for fresh offer');
+      logger.info({ flightNumber }, 'Re-searching for fresh offer');
       const retryResult = await searchAndBookFlight(
         { flightNumber, origin, destination, departureDate },
         passengers,
@@ -189,15 +190,25 @@ const TOOL_HANDLERS: Record<
           note: `Price at booking: ${retryResult.price.amount} ${retryResult.price.currency}`,
         };
       }
+    }
+
+    // Both attempts failed
+    const isTestMode = (process.env.DUFFEL_API_KEY ?? '').startsWith('duffel_test');
+    if (isTestMode) {
       return {
         status: 'failed',
-        error: 'The original offer expired and the same flight could not be found in a fresh search. Ask the user if they would like to search for alternatives.',
+        error:
+          'The booking system is running in test mode, which does not support completing real airline bookings. ' +
+          'The flight search results and pricing are real, but the final booking step requires a live API key. ' +
+          'Tell the user you found the flight details and suggest they book directly — provide the airline, flight number, route, date, and approximate price to make it easy.',
       };
     }
 
     return {
       status: 'failed',
-      error: 'The flight offer has expired. Ask the user to confirm they still want this flight, then use search_flights to get a fresh offer before booking.',
+      error:
+        'The booking could not be completed after multiple attempts — the airline system may be temporarily unavailable. ' +
+        'Apologize and provide the flight details (airline, flight number, route, date, price) so the user can book directly on the airline website.',
     };
   },
 
