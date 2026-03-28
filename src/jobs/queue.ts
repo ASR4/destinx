@@ -31,6 +31,37 @@ const workers: Worker[] = [];
 let _conversationEvents: QueueEvents | null = null;
 
 /**
+ * Detect Claude responses ending with numbered options (e.g. "1. Beach\n2. City\n3. Mountain").
+ * Returns the body text and option labels for interactive buttons.
+ */
+function parseQuestionWithOptions(
+  text: string,
+): { body: string; options: string[] } | null {
+  // Match lines like "1. Beach vacation" or "1) Beach vacation" at the end of the text
+  const lines = text.trimEnd().split('\n');
+  const optionLines: string[] = [];
+
+  // Walk backwards from the end collecting numbered options
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const match = lines[i]!.match(/^\s*(\d+)[.\)]\s+(.+)$/);
+    if (match) {
+      optionLines.unshift(match[2]!.trim());
+    } else {
+      break;
+    }
+  }
+
+  if (optionLines.length < 2 || optionLines.length > 3) return null;
+
+  // Everything before the options is the body
+  const bodyLines = lines.slice(0, lines.length - optionLines.length);
+  const body = bodyLines.join('\n').trim();
+  if (!body) return null;
+
+  return { body, options: optionLines };
+}
+
+/**
  * Get the conversation queue events listener for progress-based holding messages.
  */
 export function getConversationEvents(): QueueEvents {
@@ -70,7 +101,16 @@ export function startWorkers(): void {
           },
         });
 
-        await sendText(userPhone, responseText);
+        // Detect questions with numbered options and send as interactive buttons
+        const parsed = parseQuestionWithOptions(responseText);
+        if (parsed) {
+          const { sendQuestionWithOptions } = await import(
+            '../services/whatsapp/templates.js'
+          );
+          await sendQuestionWithOptions(userPhone, parsed.body, parsed.options);
+        } else {
+          await sendText(userPhone, responseText);
+        }
 
         // Persist the assistant's response to the messages table
         const { getDb } = await import('../db/client.js');

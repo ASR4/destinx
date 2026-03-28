@@ -8,6 +8,7 @@ import { startWorkers, stopWorkers } from './jobs/queue.js';
 import { startScheduler } from './jobs/scheduler.js';
 import { closeDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { ensureTemplates } from './services/whatsapp/templates.js';
 import { logger } from './utils/logger.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -32,6 +33,11 @@ async function main() {
 
   startWorkers();
   await startScheduler();
+
+  // Create Twilio Content API templates for interactive WhatsApp messages (non-blocking)
+  ensureTemplates().catch((err) =>
+    logger.warn({ err }, 'Failed to ensure WhatsApp templates — buttons will fall back to text'),
+  );
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');

@@ -72,6 +72,33 @@ const TEMPLATE_DEFINITIONS = {
     },
     language: 'en',
   },
+  question_2_options: {
+    friendlyName: 'destinx_question_2_options',
+    types: {
+      'twilio/quick-reply': {
+        body: '{{1}}',
+        actions: [
+          { title: '{{2}}', id: 'option_1' },
+          { title: '{{3}}', id: 'option_2' },
+        ],
+      },
+    },
+    language: 'en',
+  },
+  question_3_options: {
+    friendlyName: 'destinx_question_3_options',
+    types: {
+      'twilio/quick-reply': {
+        body: '{{1}}',
+        actions: [
+          { title: '{{2}}', id: 'option_1' },
+          { title: '{{3}}', id: 'option_2' },
+          { title: '{{4}}', id: 'option_3' },
+        ],
+      },
+    },
+    language: 'en',
+  },
 } as const;
 
 type TemplateName = keyof typeof TEMPLATE_DEFINITIONS;
@@ -277,4 +304,42 @@ function formatDayForTemplate(day: DayPlan, totalDays: number): string {
 
   const result = lines.join('\n');
   return result.slice(0, WHATSAPP.MAX_INTERACTIVE_BODY_LENGTH);
+}
+
+/**
+ * Send a question with 2-3 interactive quick-reply buttons.
+ * Falls back to numbered text if template isn't available.
+ */
+export async function sendQuestionWithOptions(
+  to: string,
+  body: string,
+  options: string[],
+): Promise<void> {
+  const count = Math.min(options.length, 3);
+  const templateName = count === 2 ? 'question_2_options' : 'question_3_options';
+  const truncated = options.slice(0, count).map((o) => o.slice(0, WHATSAPP.MAX_BUTTON_TITLE_LENGTH));
+
+  const sid = getTemplateSid(templateName);
+  if (sid) {
+    try {
+      const client = getClient();
+      const vars: Record<string, string> = { '1': body.slice(0, WHATSAPP.MAX_INTERACTIVE_BODY_LENGTH) };
+      truncated.forEach((o, i) => { vars[String(i + 2)] = o; });
+
+      await client.messages.create({
+        contentSid: sid,
+        contentVariables: JSON.stringify(vars),
+        from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+        to,
+      });
+      return;
+    } catch (err) {
+      logger.warn({ err }, 'Question template failed, using plain text fallback');
+    }
+  }
+
+  // Fallback: numbered text
+  const fallbackOptions = truncated.map((o, i) => `*${i + 1}.* ${o}`).join('\n');
+  const { sendText } = await import('./sender.js');
+  await sendText(to, `${body}\n\n${fallbackOptions}`);
 }

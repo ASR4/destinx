@@ -1,7 +1,6 @@
 import { eq, and } from 'drizzle-orm';
 import type { IncomingMessage } from '../../types/whatsapp.js';
 import { parseWhatsAppNumber, toWhatsAppAddress } from '../../utils/phone.js';
-import { sendTypingIndicator } from './sender.js';
 import { conversationQueue } from '../../jobs/queue.js';
 import { getDb } from '../../db/client.js';
 import { users, conversations, messages } from '../../db/schema.js';
@@ -23,10 +22,6 @@ export async function handleIncomingMessage(
   const phone = parseWhatsAppNumber(message.from);
   const whatsappTo = toWhatsAppAddress(phone);
   logger.info({ messageSid: message.messageSid }, 'Incoming message');
-
-  sendTypingIndicator(whatsappTo).catch((err) =>
-    logger.error({ err }, 'Failed to send typing indicator'),
-  );
 
   const db = getDb();
 
