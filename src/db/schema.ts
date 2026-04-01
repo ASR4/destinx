@@ -7,6 +7,7 @@ import {
   jsonb,
   real,
   date,
+  boolean,
   index,
   unique,
   customType,
@@ -32,6 +33,8 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   phoneNumber: varchar('phone_number', { length: 20 }).unique().notNull(),
   name: varchar('name', { length: 255 }),
+  active: boolean('active').default(true).notNull(),
+  optedOutAt: timestamp('opted_out_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
@@ -126,6 +129,8 @@ export const bookings = pgTable('bookings', {
   bookingReference: varchar('booking_reference', { length: 100 }),
   price: jsonb('price'),
   browserSessionId: varchar('browser_session_id', { length: 100 }),
+  stripeSessionId: varchar('stripe_session_id', { length: 200 }),
+  paymentStatus: varchar('payment_status', { length: 30 }).default('pending'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });

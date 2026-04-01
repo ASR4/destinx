@@ -9,6 +9,7 @@ import {
   buildRestaurantDeepLinks,
   buildExperienceDeepLinks,
 } from '../../utils/deeplink.js';
+import { uploadScreenshot } from '../storage/r2.js';
 import { logger } from '../../utils/logger.js';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
@@ -77,7 +78,7 @@ export async function executeBookingSession(
     } as ConstructorParameters<typeof Stagehand>[0]);
     await stagehand.init();
 
-    const result = await executeProviderFlow(stagehand, booking);
+    const result = await executeProviderFlow(stagehand, booking, sessionId);
 
     if (result.status === 'confirmed' && bookingId) {
       await getDb()
@@ -125,17 +126,14 @@ export async function executeBookingSession(
 async function executeProviderFlow(
   stagehand: Stagehand,
   booking: BookingDetails,
+  sessionId?: string,
 ): Promise<BookingResult> {
-  // Dynamic provider selection based on booking type
-  switch (booking.type) {
-    case 'hotel': {
-      const { MarriottBookingProvider } = await import('./providers/marriott.js');
-      const provider = new MarriottBookingProvider();
-      return provider.execute(stagehand, booking as unknown as Record<string, unknown>);
-    }
-    default:
-      return { status: 'failed', error: `No provider implemented for type: ${booking.type}` };
-  }
+  const { selectProvider, describeProvider } = await import('./providers/provider-selector.js');
+  const providerName = describeProvider(booking);
+  logger.info({ type: booking.type, provider: providerName }, 'Selected booking provider');
+
+  const provider = await selectProvider(booking);
+  return provider.execute(stagehand, booking as unknown as Record<string, unknown>, { sessionId });
 }
 
 function buildDeepLinksForBooking(booking: BookingDetails): DeepLinks {
@@ -184,9 +182,7 @@ async function captureFailureScreenshot(sessionId: string): Promise<string | nul
     await stagehand.init();
     const page = stagehand.context.activePage()!;
     const buffer = await page.screenshot({ type: 'png' });
-    // TODO: Upload buffer to a file storage service and return URL
-    logger.debug({ bytes: buffer.length }, 'Screenshot captured');
-    return null;
+    return uploadScreenshot(Buffer.from(buffer), sessionId, 'failure');
   } catch {
     return null;
   }

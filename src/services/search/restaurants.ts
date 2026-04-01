@@ -9,6 +9,7 @@ export interface RestaurantResult {
   priceLevel: number;
   photos: string[];
   mapsUrl: string;
+  reservationUrl?: string; // Google Reserve link (OpenTable/Resy/direct — zero automation needed)
   openTableUrl?: string;
   openingHours?: string[];
 }
@@ -78,7 +79,7 @@ export async function searchRestaurants(
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': apiKey,
           'X-Goog-FieldMask':
-            'places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.googleMapsUri,places.photos,places.types,places.currentOpeningHours',
+            'places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.googleMapsUri,places.photos,places.types,places.currentOpeningHours,places.reservationUri',
         },
         body: JSON.stringify(body),
       },
@@ -101,6 +102,7 @@ export async function searchRestaurants(
         photos?: Array<{ name: string }>;
         types?: string[];
         currentOpeningHours?: { weekdayDescriptions?: string[] };
+        reservationUri?: string;
       }>;
     };
 
@@ -128,6 +130,7 @@ export async function searchRestaurants(
         priceLevel: priceLevelToNumber(place.priceLevel),
         photos: photoRefs,
         mapsUrl: place.googleMapsUri ?? '',
+        reservationUrl: place.reservationUri,  // Google Reserve — routes to OpenTable/Resy/direct
         openTableUrl: openTableSearch,
         openingHours: place.currentOpeningHours?.weekdayDescriptions,
       };

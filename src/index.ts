@@ -4,6 +4,7 @@ import formbody from '@fastify/formbody';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { bookingRoutes } from './routes/booking.js';
 import { healthRoutes } from './routes/health.js';
+import { paymentRoutes } from './routes/payments.js';
 import { startWorkers, stopWorkers } from './jobs/queue.js';
 import { startScheduler } from './jobs/scheduler.js';
 import { closeDb } from './db/client.js';
@@ -24,6 +25,7 @@ async function main() {
   await app.register(healthRoutes);
   await app.register(whatsappRoutes);
   await app.register(bookingRoutes);
+  await app.register(paymentRoutes);
 
   if (process.env.NODE_ENV !== 'production') {
     const { devRoutes } = await import('./routes/dev.js');

@@ -39,6 +39,17 @@ const envSchema = z.object({
   CLOUDFLARE_R2_SECRET_KEY: z.string().optional(),
   CLOUDFLARE_R2_BUCKET: z.string().default('travel-agent'),
   CLOUDFLARE_R2_ENDPOINT: z.string().optional(),
+
+  // Stripe payments
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_SERVICE_FEE_CENTS: z.coerce.number().default(1500), // $15 per booking
+
+  // Resy restaurant reservations (optional)
+  RESY_API_KEY: z.string().optional(),
+
+  // Events (optional)
+  TICKETMASTER_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

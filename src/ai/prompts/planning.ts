@@ -1,9 +1,11 @@
 import type { UserProfile } from '../../types/memory.js';
 import type { PlanInput } from '../../types/trip.js';
+import type { DestinationResearch } from '../../services/planning/research.js';
 
 export function buildPlanningPrompt(
   input: PlanInput,
   userProfile: UserProfile | null,
+  research?: DestinationResearch,
 ): string {
   return `You are generating a detailed day-by-day travel itinerary.
 
@@ -18,6 +20,17 @@ export function buildPlanningPrompt(
 - Avoid: ${input.avoid?.join(', ') || 'Nothing specified'}
 
 ${userProfile ? `## Traveler Preferences\n${JSON.stringify(userProfile.preferences, null, 2)}` : ''}
+
+${research ? `## Destination Research
+- Overview: ${research.overview}
+- Best time to visit: ${research.bestTimeToVisit}
+- Currency: ${research.currency}
+- Language: ${research.language}
+${research.visaRequirements ? `- Visa: ${research.visaRequirements}` : ''}
+- Average costs: Budget meal ~$${research.avgCosts.meal_budget}, Mid-range meal ~$${research.avgCosts.meal_midrange}, Budget hotel ~$${research.avgCosts.hotel_budget}/night, Mid-range hotel ~$${research.avgCosts.hotel_midrange}/night
+${research.upcomingEvents.length > 0 ? `- Upcoming events/festivals:\n${research.upcomingEvents.map((e) => `  • ${e}`).join('\n')}` : ''}
+${research.travelAdvisories.length > 0 ? `- Travel advisories:\n${research.travelAdvisories.map((a) => `  • ${a}`).join('\n')}` : ''}
+Use these facts to ground your recommendations in reality.` : ''}
 
 ## Output Format
 Create a structured itinerary with the following JSON shape for each day:

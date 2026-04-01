@@ -1,4 +1,4 @@
-import { Queue, Worker, QueueEvents } from 'bullmq';
+import { Queue, Worker, QueueEvents, type Job } from 'bullmq';
 import type { ConnectionOptions } from 'bullmq';
 import { logger } from '../utils/logger.js';
 import { QUEUE } from '../config/constants.js';
@@ -11,20 +11,30 @@ function getConnection(): ConnectionOptions {
   return _connection;
 }
 
+const retryOptions = {
+  attempts: 3,
+  backoff: { type: 'exponential' as const, delay: 2000 },
+};
+
 export const conversationQueue = new Queue('conversation', {
   connection: getConnection(),
+  defaultJobOptions: { ...retryOptions, removeOnComplete: 100, removeOnFail: 500 },
 });
 export const planningQueue = new Queue('planning', {
   connection: getConnection(),
+  defaultJobOptions: { ...retryOptions, removeOnComplete: 50, removeOnFail: 200 },
 });
 export const bookingQueue = new Queue('booking', {
   connection: getConnection(),
+  defaultJobOptions: { ...retryOptions, removeOnComplete: 50, removeOnFail: 200 },
 });
 export const memoryQueue = new Queue('memory', {
   connection: getConnection(),
+  defaultJobOptions: { attempts: 2, backoff: { type: 'fixed' as const, delay: 1000 }, removeOnComplete: 100, removeOnFail: 200 },
 });
 export const priceCheckQueue = new Queue('price-check', {
   connection: getConnection(),
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential' as const, delay: 5000 }, removeOnComplete: 50, removeOnFail: 100 },
 });
 
 const workers: Worker[] = [];
@@ -70,123 +80,121 @@ export function getConversationEvents(): QueueEvents {
   return _conversationEvents;
 }
 
+/**
+ * Attach standard error + failed event handlers to a worker.
+ * Logs all failures; on final failure (no more retries) logs at error level.
+ */
+function attachWorkerEvents(worker: Worker, name: string): void {
+  worker.on('failed', (job, err) => {
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const maxAttempts = job?.opts?.attempts ?? retryOptions.attempts;
+    if (attemptsMade >= maxAttempts) {
+      logger.error(
+        { jobId: job?.id, jobName: job?.name, err, attemptsMade },
+        `[DLQ] ${name} job permanently failed after ${attemptsMade} attempts`,
+      );
+    } else {
+      logger.warn(
+        { jobId: job?.id, err, attemptsMade, maxAttempts },
+        `${name} job failed — will retry`,
+      );
+    }
+  });
+  worker.on('error', (err) => logger.error({ err }, `${name} worker error`));
+}
+
 export function startWorkers(): void {
   const conn = getConnection();
 
+  const makeWorker = (name: string, handler: (job: Job<any>) => Promise<void>, concurrency: number): Worker => {
+    const w = new Worker(name, handler, { connection: conn, concurrency });
+    attachWorkerEvents(w, name);
+    workers.push(w);
+    return w;
+  };
+
   // --- Conversation worker: runs the engine + sends holding messages via progress ---
-  workers.push(
-    new Worker(
-      'conversation',
-      async (job) => {
-        const { userId, conversationId, message, userPhone } = job.data as {
-          userId: string;
-          conversationId: string;
-          message: string;
-          userPhone: string;
-        };
+  makeWorker('conversation', async (job) => {
+    const { userId, conversationId, message, userPhone, correlationId } = job.data as {
+      userId: string;
+      conversationId: string;
+      message: string;
+      userPhone: string;
+      correlationId?: string;
+    };
 
-        const { processMessage } = await import(
-          '../services/conversation/engine.js'
+    const { withCorrelation, generateCorrelationId } = await import('../utils/correlation.js');
+    const cid = correlationId ?? generateCorrelationId();
+
+    return withCorrelation({ correlationId: cid, userId, conversationId }, async () => {
+    const { processMessage } = await import('../services/conversation/engine.js');
+    const { sendText } = await import('../services/whatsapp/sender.js');
+
+    const responseText = await processMessage(userId, conversationId, message, {
+      userPhone,
+      onProgress: (holdingMsg: string) => {
+        sendText(userPhone, holdingMsg).catch((err) =>
+          logger.error({ err }, 'Failed to send holding message'),
         );
-        const { sendText } = await import(
-          '../services/whatsapp/sender.js'
-        );
-
-        const responseText = await processMessage(userId, conversationId, message, {
-          userPhone,
-          onProgress: (holdingMsg: string) => {
-            sendText(userPhone, holdingMsg).catch((err) =>
-              logger.error({ err }, 'Failed to send holding message'),
-            );
-          },
-        });
-
-        // Detect questions with numbered options → buttons (2-3) or list (4-10)
-        const parsed = parseQuestionWithOptions(responseText);
-        if (parsed && parsed.options.length <= 3) {
-          const { sendQuestionWithOptions } = await import(
-            '../services/whatsapp/templates.js'
-          );
-          await sendQuestionWithOptions(userPhone, parsed.body, parsed.options);
-        } else if (parsed && parsed.options.length >= 4) {
-          const { sendListMessage } = await import(
-            '../services/whatsapp/sender.js'
-          );
-          await sendListMessage(
-            userPhone,
-            parsed.body,
-            'Choose',
-            [{ title: 'Options', rows: parsed.options.map((o, i) => ({ id: `option_${i + 1}`, title: o.slice(0, 24) })) }],
-          );
-        } else {
-          await sendText(userPhone, responseText);
-        }
-
-        // Persist the assistant's response to the messages table
-        const { getDb } = await import('../db/client.js');
-        const { messages } = await import('../db/schema.js');
-        await getDb().insert(messages).values({
-          conversationId,
-          role: 'assistant',
-          content: responseText,
-          messageType: 'text',
-        });
       },
-      { connection: conn, concurrency: QUEUE.CONVERSATION_CONCURRENCY },
-    ),
-  );
+    });
 
-  workers.push(
-    new Worker(
-      'planning',
-      async (job) => {
-        const { processPlanGeneration } = await import('./workers/plan-generator.js');
-        await processPlanGeneration(job.data);
-      },
-      { connection: conn, concurrency: QUEUE.PLANNING_CONCURRENCY },
-    ),
-  );
+    // Detect questions with numbered options → buttons (2-3) or list (4-10)
+    const parsed = parseQuestionWithOptions(responseText);
+    if (parsed && parsed.options.length <= 3) {
+      const { sendQuestionWithOptions } = await import('../services/whatsapp/templates.js');
+      await sendQuestionWithOptions(userPhone, parsed.body, parsed.options);
+    } else if (parsed && parsed.options.length >= 4) {
+      const { sendListMessage } = await import('../services/whatsapp/sender.js');
+      await sendListMessage(
+        userPhone,
+        parsed.body,
+        'Choose',
+        [{ title: 'Options', rows: parsed.options.map((o, i) => ({ id: `option_${i + 1}`, title: o.slice(0, 24) })) }],
+      );
+    } else {
+      await sendText(userPhone, responseText);
+    }
 
-  workers.push(
-    new Worker(
-      'booking',
-      async (job) => {
-        const { processBrowserBooking } = await import('./workers/browser-booking.js');
-        await processBrowserBooking(job.data);
-      },
-      { connection: conn, concurrency: QUEUE.BOOKING_CONCURRENCY },
-    ),
-  );
+    // Persist the assistant's response to the messages table
+    const { getDb } = await import('../db/client.js');
+    const { messages } = await import('../db/schema.js');
+    await getDb().insert(messages).values({
+      conversationId,
+      role: 'assistant',
+      content: responseText,
+      messageType: 'text',
+    });
+    }); // end withCorrelation
+  }, QUEUE.CONVERSATION_CONCURRENCY);
 
-  workers.push(
-    new Worker(
-      'memory',
-      async (job) => {
-        if (job.name === 'confidence-decay') {
-          const { runConfidenceDecay } = await import('./scheduler.js');
-          await runConfidenceDecay();
-        } else if (job.name === 'post-trip-check') {
-          const { runPostTripCheck } = await import('./scheduler.js');
-          await runPostTripCheck();
-        } else {
-          const { processMemoryExtraction } = await import('./workers/memory-extract.js');
-          await processMemoryExtraction(job.data);
-        }
-      },
-      { connection: conn, concurrency: QUEUE.MEMORY_CONCURRENCY },
-    ),
-  );
+  makeWorker('planning', async (job) => {
+    const { processPlanGeneration } = await import('./workers/plan-generator.js');
+    await processPlanGeneration(job.data);
+  }, QUEUE.PLANNING_CONCURRENCY);
 
-  workers.push(
-    new Worker(
-      'price-check',
-      async (job) => {
-        const { processPriceCheck } = await import('./workers/price-check.js');
-        await processPriceCheck(job.data);
-      },
-      { connection: conn, concurrency: 2 },
-    ),
-  );
+  makeWorker('booking', async (job) => {
+    const { processBrowserBooking } = await import('./workers/browser-booking.js');
+    await processBrowserBooking(job.data);
+  }, QUEUE.BOOKING_CONCURRENCY);
+
+  makeWorker('memory', async (job) => {
+    if (job.name === 'confidence-decay') {
+      const { runConfidenceDecay } = await import('./scheduler.js');
+      await runConfidenceDecay();
+    } else if (job.name === 'post-trip-check') {
+      const { runPostTripCheck } = await import('./scheduler.js');
+      await runPostTripCheck();
+    } else {
+      const { processMemoryExtraction } = await import('./workers/memory-extract.js');
+      await processMemoryExtraction(job.data);
+    }
+  }, QUEUE.MEMORY_CONCURRENCY);
+
+  makeWorker('price-check', async (job) => {
+    const { processPriceCheck } = await import('./workers/price-check.js');
+    await processPriceCheck(job.data);
+  }, 2);
 
   logger.info('All queue workers started');
 }

@@ -3,6 +3,7 @@ import { getAnthropicClient } from '../../ai/client.js';
 import { getTravelAgentTools } from '../../ai/tools.js';
 import { buildPlanningPrompt } from '../../ai/prompts/planning.js';
 import { recallUserProfile } from '../memory/recall.js';
+import { researchDestination } from './research.js';
 import { executeToolCalls } from '../conversation/tool-executor.js';
 import { validateTripPlan, buildStrictPlanPrompt } from './trip-schema.js';
 import { AI } from '../../config/constants.js';
@@ -36,9 +37,19 @@ export async function generateTripPlan(
 ): Promise<Itinerary> {
   logger.info({ userId, destination: input.destination }, 'Generating trip plan');
 
-  const userProfile = await recallUserProfile(userId);
+  const [userProfile, research] = await Promise.all([
+    recallUserProfile(userId),
+    researchDestination(input.destination, input.startDate && input.endDate
+      ? { start: input.startDate, end: input.endDate }
+      : undefined,
+    ).catch((err) => {
+      logger.warn({ err }, 'Destination research failed — continuing without it');
+      return undefined;
+    }),
+  ]);
+
   const anthropic = getAnthropicClient();
-  const prompt = buildPlanningPrompt(input, userProfile);
+  const prompt = buildPlanningPrompt(input, userProfile, research);
 
   let messages: Anthropic.Messages.MessageParam[] = [
     { role: 'user', content: prompt },

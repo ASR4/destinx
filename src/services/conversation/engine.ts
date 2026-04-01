@@ -3,12 +3,18 @@ import { eq, and, inArray, desc } from 'drizzle-orm';
 import { getAnthropicClient } from '../../ai/client.js';
 import { getTravelAgentTools } from '../../ai/tools.js';
 import { buildSystemPrompt } from '../../ai/prompts/system.js';
-import { recallUserProfile } from '../memory/recall.js';
+import { recallUserProfile, recallRelevantMemories } from '../memory/recall.js';
 import { getConversationHistory } from './context.js';
 import { classifyIntent } from './intent.js';
 import { getNextState, isConfirmationInState } from './state-machine.js';
 import { executeToolCalls, getHoldingMessage } from './tool-executor.js';
 import { memoryQueue } from '../../jobs/queue.js';
+import {
+  checkUserClaudeLimit,
+  acquireSystemClaudeSlot,
+  releaseSystemClaudeSlot,
+  RATE_LIMIT_MESSAGES,
+} from '../rate-limiter.js';
 import { getDb } from '../../db/client.js';
 import { conversations, messages, trips } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
@@ -32,9 +38,64 @@ export async function processMessage(
 ): Promise<string> {
   logger.info({ userId, conversationId }, 'Processing message');
 
-  const userProfile = await recallUserProfile(userId);
-  const history = await getConversationHistory(conversationId);
-  const activeTrip = await getActiveTrip(userId);
+  // Rate limiting — check before doing any expensive work
+  const [claudeLimit, claudeSlot] = await Promise.all([
+    checkUserClaudeLimit(userId),
+    acquireSystemClaudeSlot(),
+  ]);
+
+  if (!claudeLimit.allowed) {
+    logger.warn({ userId }, 'User Claude rate limit exceeded');
+    return RATE_LIMIT_MESSAGES.claude;
+  }
+  if (!claudeSlot.allowed) {
+    logger.warn('System Claude concurrency limit exceeded');
+    return RATE_LIMIT_MESSAGES.system;
+  }
+
+  try {
+    return await _processMessageInner(userId, conversationId, userMessage, options);
+  } catch (err) {
+    logger.error({ err, userId, conversationId }, 'processMessage fatal error');
+    return "Sorry, I hit an unexpected error — please try again in a moment.";
+  } finally {
+    await releaseSystemClaudeSlot();
+  }
+}
+
+async function _processMessageInner(
+  userId: string,
+  conversationId: string,
+  userMessage: string,
+  options: ProcessMessageOptions,
+): Promise<string> {
+  let userProfile: Awaited<ReturnType<typeof recallUserProfile>>;
+  let history: Awaited<ReturnType<typeof getConversationHistory>>;
+  try {
+    [userProfile, history] = await Promise.all([
+      recallUserProfile(userId),
+      getConversationHistory(conversationId),
+    ]);
+  } catch (err) {
+    logger.error({ err, userId }, 'Failed to load user context — using empty profile');
+    userProfile = { preferences: { accommodation: [], food: [], transport: [], budget: [], travel_style: [], loyalty: [], dietary: [], companion: [] }, lastTrips: [] };
+    history = [];
+  }
+
+  // Attach semantic memories relevant to this message (best-effort — never blocks)
+  try {
+    const semanticMemories = await recallRelevantMemories(userId, userMessage);
+    if (semanticMemories.length > 0) {
+      userProfile.semanticMemories = semanticMemories;
+    }
+  } catch (err) {
+    logger.debug({ err }, 'Semantic memory recall failed — skipping');
+  }
+
+  const activeTrip = await getActiveTrip(userId).catch((err) => {
+    logger.warn({ err }, 'Failed to load active trip');
+    return null;
+  });
 
   const currentState = await getConversationState(conversationId);
 
@@ -54,8 +115,9 @@ export async function processMessage(
 
   let finalText = '';
   const collectedText: string[] = [];
-  let holdingMessageSent = false;
+  let holdingMessagesSent = 0;
   const loopStartTime = Date.now();
+  const SECOND_HOLDING_DELAY_MS = 20_000;
 
   for (let iteration = 0; iteration < CONVERSATION.MAX_TOOL_LOOP_ITERATIONS; iteration++) {
     const response = await anthropic.messages.create({
@@ -83,10 +145,13 @@ export async function processMessage(
     if (iterText) collectedText.push(iterText);
 
     const elapsed = Date.now() - loopStartTime;
-    if (!holdingMessageSent && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
+    if (holdingMessagesSent === 0 && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
       const toolNames = toolUseBlocks.map((b) => b.name);
       options.onProgress?.(getHoldingMessage(toolNames));
-      holdingMessageSent = true;
+      holdingMessagesSent = 1;
+    } else if (holdingMessagesSent === 1 && elapsed > SECOND_HOLDING_DELAY_MS) {
+      options.onProgress?.("Still working on this — almost there! 🙏");
+      holdingMessagesSent = 2;
     }
 
     const toolResults = await executeToolCalls(

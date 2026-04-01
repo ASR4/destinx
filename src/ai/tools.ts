@@ -291,6 +291,54 @@ export function getTravelAgentTools(): Tool[] {
       },
     },
     {
+      name: 'modify_trip_plan',
+      description:
+        'Apply a modification to an existing trip itinerary. Use this when the user wants to change, add, or remove something from their plan.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          trip_id: { type: 'string', description: 'The trip ID to modify' },
+          modification: {
+            type: 'string',
+            description: 'Natural language description of the change, e.g. "replace the Nikko day trip with a day in Kyoto"',
+          },
+        },
+        required: ['trip_id', 'modification'],
+      },
+    },
+    {
+      name: 'search_events',
+      description:
+        'Search for events, concerts, festivals, sports, and activities at a destination during travel dates.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          destination: { type: 'string', description: 'City or region' },
+          start_date: { type: 'string', description: 'YYYY-MM-DD' },
+          end_date: { type: 'string', description: 'YYYY-MM-DD' },
+          category: {
+            type: 'string',
+            enum: ['music', 'sports', 'arts', 'family', 'film', 'festival'],
+            description: 'Filter by event type',
+          },
+        },
+        required: ['destination', 'start_date', 'end_date'],
+      },
+    },
+    {
+      name: 'generate_itinerary_pdf',
+      description:
+        'Generate a beautiful PDF of the trip itinerary and return a shareable link. Call this when the user asks for a PDF, printable version, or wants to share their itinerary.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          trip_id: { type: 'string', description: 'The trip ID to export' },
+          title: { type: 'string', description: 'Title for the PDF, e.g. "Tokyo Adventure 2026"' },
+        },
+        required: ['trip_id'],
+      },
+    },
+    {
       name: 'save_preference',
       description:
         'Save something you learned about the user for future trips. Call this whenever the user reveals a preference.',

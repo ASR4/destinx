@@ -1,13 +1,11 @@
-import { Redis } from 'ioredis';
 import { RATE_LIMITS } from '../config/constants.js';
+import { getRedisClient } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
 
-let _redis: Redis | null = null;
-
-function getRedis(): Redis {
-  if (_redis) return _redis;
-  _redis = new Redis(process.env.REDIS_URL!);
-  return _redis;
+function getRedis() {
+  const redis = getRedisClient();
+  if (!redis) throw new Error('Redis not configured');
+  return redis;
 }
 
 interface RateLimitResult {
@@ -136,8 +134,5 @@ export const RATE_LIMIT_MESSAGES = {
 } as const;
 
 export async function closeRateLimiter(): Promise<void> {
-  if (_redis) {
-    await _redis.quit();
-    _redis = null;
-  }
+  // Redis client lifecycle is managed by src/utils/redis.ts
 }

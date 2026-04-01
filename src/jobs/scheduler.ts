@@ -1,7 +1,7 @@
-import { eq, lte, and, sql } from 'drizzle-orm';
+import { eq, lte, and, sql, isNotNull } from 'drizzle-orm';
 import { priceCheckQueue, memoryQueue } from './queue.js';
 import { getDb } from '../db/client.js';
-import { trips, bookings } from '../db/schema.js';
+import { trips, bookings, users } from '../db/schema.js';
 import { decayPreferenceConfidence } from '../services/memory/store.js';
 import { logger } from '../utils/logger.js';
 
@@ -49,7 +49,7 @@ export async function runConfidenceDecay(): Promise<void> {
 
 /**
  * Check for trips that ended recently and queue post-trip feedback.
- * Called by the memory queue worker when the 'post-trip-check' job fires.
+ * Joins with users table to get phone numbers.
  */
 export async function runPostTripCheck(): Promise<void> {
   const db = getDb();
@@ -60,21 +60,70 @@ export async function runPostTripCheck(): Promise<void> {
 
   const endedTrips = await db
     .select({
-      id: trips.id,
+      tripId: trips.id,
       userId: trips.userId,
       endDate: trips.endDate,
+      userPhone: users.phoneNumber,
     })
     .from(trips)
+    .innerJoin(users, eq(trips.userId, users.id))
     .where(
       and(
         eq(trips.status, 'confirmed'),
         lte(trips.endDate, todayStr),
         sql`${trips.endDate} >= ${yesterdayStr}`,
+        eq(users.active, true),
       ),
     );
 
   for (const trip of endedTrips) {
-    // Queue post-trip feedback (the worker needs the user's phone — TODO: join with users table)
-    logger.info({ tripId: trip.id, userId: trip.userId }, 'Trip ended — queuing post-trip feedback');
+    logger.info({ tripId: trip.tripId, userId: trip.userId }, 'Trip ended — queuing post-trip feedback');
+
+    // Queue memory extraction job for post-trip feedback
+    await memoryQueue.add('post-trip-feedback', {
+      userId: trip.userId,
+      tripId: trip.tripId,
+      userPhone: trip.userPhone,
+    });
+  }
+}
+
+/**
+ * Run the price check sweep: query all active bookings with price data and enqueue individual jobs.
+ * Called by the price-check queue worker when the 'check-all-prices' job fires.
+ */
+export async function runPriceCheckSweep(): Promise<void> {
+  const db = getDb();
+
+  // Find active bookings that have a price stored
+  const activeBookings = await db
+    .select({
+      id: bookings.id,
+      userId: bookings.userId,
+      price: bookings.price,
+      userPhone: users.phoneNumber,
+    })
+    .from(bookings)
+    .innerJoin(users, eq(bookings.userId, users.id))
+    .where(
+      and(
+        eq(bookings.status, 'booked'),
+        isNotNull(bookings.price),
+        eq(users.active, true),
+      ),
+    );
+
+  logger.info({ count: activeBookings.length }, 'Price check sweep started');
+
+  for (const booking of activeBookings) {
+    const price = booking.price as { amount?: number; currency?: string } | null;
+    if (!price?.amount) continue;
+
+    await priceCheckQueue.add('check-price', {
+      bookingId: booking.id,
+      originalPrice: price.amount,
+      userId: booking.userId,
+      userPhone: booking.userPhone,
+    });
   }
 }

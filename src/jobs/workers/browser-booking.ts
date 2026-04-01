@@ -1,4 +1,5 @@
 import { executeBookingSession } from '../../services/booking/orchestrator.js';
+import { releaseSystemBrowserSlot } from '../../services/rate-limiter.js';
 import { logger } from '../../utils/logger.js';
 import type { BookingDetails } from '../../types/booking.js';
 
@@ -33,5 +34,7 @@ export async function processBrowserBooking(
   } catch (err) {
     logger.error({ err, sessionId: data.sessionId }, 'Browser booking failed');
     throw err;
+  } finally {
+    await releaseSystemBrowserSlot();
   }
 }

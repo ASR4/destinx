@@ -96,6 +96,10 @@ export async function sendMedia(
   }
 }
 
-export async function sendTypingIndicator(to: string): Promise<void> {
-  await sendText(to, '✈️ Let me look into that...');
+/**
+ * @deprecated This sends a real message and counts against Twilio limits.
+ * Use onProgress holding messages in engine.ts instead.
+ */
+export async function sendTypingIndicator(_to: string): Promise<void> {
+  // No-op: replaced by contextual holding messages in the conversation engine
 }

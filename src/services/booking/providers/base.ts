@@ -1,6 +1,7 @@
 import type { Stagehand } from '@browserbasehq/stagehand';
 import type { BookingResult } from '../../../types/booking.js';
 import { sendText } from '../../whatsapp/sender.js';
+import { uploadScreenshot } from '../../storage/r2.js';
 import { BOOKING } from '../../../config/constants.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -10,6 +11,7 @@ export abstract class BaseBookingProvider {
   abstract execute(
     stagehand: Stagehand,
     details: Record<string, unknown>,
+    context?: { sessionId?: string },
   ): Promise<BookingResult>;
 
   /**
@@ -120,6 +122,27 @@ export abstract class BaseBookingProvider {
       logger.warn({ err: firstErr, instruction }, 'act() failed, retrying with rephrased instruction');
       const rephrased = `Please try to: ${instruction}. Look for alternative buttons or links that accomplish the same thing.`;
       await stagehand.act(rephrased);
+    }
+  }
+
+  /**
+   * Capture a screenshot of the current page and upload it to R2.
+   * Fails silently — screenshots are observability, not critical path.
+   */
+  protected async captureStep(
+    stagehand: Stagehand,
+    sessionId: string,
+    stepName: string,
+  ): Promise<string | null> {
+    try {
+      const page = stagehand.context.activePage()!;
+      const buffer = await page.screenshot({ type: 'png' });
+      const url = await uploadScreenshot(Buffer.from(buffer), sessionId, stepName);
+      if (url) logger.debug({ step: stepName, url }, 'Step screenshot uploaded');
+      return url;
+    } catch (err) {
+      logger.debug({ err, step: stepName }, 'Screenshot capture failed (non-critical)');
+      return null;
     }
   }
 
