@@ -3,7 +3,7 @@ name: Destinx Next Phase
 overview: A phased plan to take the destinx travel agent from its current working state (flight booking, search, planning, memory) to a production-grade, revenue-generating travel agent with comprehensive testing, user payments, browser-based booking for all verticals, and best-in-class UX.
 todos:
   - id: fix-booking-queue
-    content: "Fix booking queue wiring — startBookingSession must enqueue on bookingQueue so browser automation actually runs"
+    content: Fix booking queue wiring — startBookingSession must enqueue on bookingQueue so browser automation actually runs
     status: pending
   - id: integration-tests
     content: "Build integration test harness: conversation-flow.test.ts, flight-booking.test.ts, mocks.ts with ioredis-mock"
@@ -12,79 +12,79 @@ todos:
     content: "Unit tests: tool-executor, search-cache, memory-store, formatter"
     status: pending
   - id: error-handling
-    content: "DLQ + retry for BullMQ, graceful fallback in processMessage, wire rate limiter, Twilio signature validation"
+    content: DLQ + retry for BullMQ, graceful fallback in processMessage, wire rate limiter, Twilio signature validation
     status: pending
   - id: ux-fixes
-    content: "Fix sendTypingIndicator Twilio cost, second holding message at 20s, wire ensureTemplates"
+    content: Fix sendTypingIndicator Twilio cost, second holding message at 20s, wire ensureTemplates
     status: pending
   - id: stripe-flights
-    content: "Stripe Checkout Sessions for flights — payment before booking, webhook triggers Duffel, per-booking markup"
+    content: Stripe Checkout Sessions for flights — payment before booking, webhook triggers Duffel, per-booking markup
     status: pending
   - id: duffel-payment-migration
-    content: "Migrate from Duffel balance to Stripe-first (charge user, book with balance). Duffel Pay is a later optimization."
+    content: Migrate from Duffel balance to Stripe-first (charge user, book with balance). Duffel Pay is a later optimization.
     status: pending
   - id: duffel-live-key
-    content: "Apply for Duffel production API access NOW — KYC takes days/weeks, keep testing with test key in parallel"
+    content: Apply for Duffel production API access NOW — KYC takes days/weeks, keep testing with test key in parallel
     status: pending
   - id: browserbase-setup
-    content: "Get Browserbase API key, test Marriott end-to-end with live browser"
+    content: Get Browserbase API key, test Marriott end-to-end with live browser
     status: pending
   - id: booking-com-provider
-    content: "Implement Booking.com browser booking provider (highest impact hotel provider)"
+    content: Implement Booking.com browser booking provider (highest impact hotel provider)
     status: pending
   - id: google-reserve-links
-    content: "Add reservationUri to Google Places restaurant search — instant reservation links with zero browser automation"
+    content: Add reservationUri to Google Places restaurant search — instant reservation links with zero browser automation
     status: pending
   - id: resy-provider
-    content: "Implement Resy API integration for direct restaurant reservations (high-end restaurants)"
+    content: Implement Resy API integration for direct restaurant reservations (high-end restaurants)
     status: pending
   - id: opentable-provider
-    content: "Implement OpenTable browser booking provider as fallback for restaurants not on Resy or Google Reserve"
+    content: Implement OpenTable browser booking provider as fallback for restaurants not on Resy or Google Reserve
     status: pending
   - id: viator-provider
-    content: "Implement Viator experience booking provider"
+    content: Implement Viator experience booking provider
     status: pending
   - id: provider-resilience
-    content: "Screenshot on every step transition, upload to R2, automation_scripts tracking"
+    content: Screenshot on every step transition, upload to R2, automation_scripts tracking
     status: pending
   - id: smart-provider-selection
-    content: "Create provider-selector.ts — chain loyalty routing, fallback logic"
+    content: Create provider-selector.ts — chain loyalty routing, fallback logic
     status: pending
   - id: interactive-whatsapp
-    content: "Implement interactive buttons/list messages via Twilio Content API"
+    content: Implement interactive buttons/list messages via Twilio Content API
     status: pending
   - id: plan-modification
-    content: "Create modifier.ts — Claude-powered itinerary delta, re-deliver changed days"
+    content: Create modifier.ts — Claude-powered itinerary delta, re-deliver changed days
     status: pending
   - id: batch-booking
-    content: "Batch booking from approved itinerary — flights then hotels then experiences"
+    content: Batch booking from approved itinerary — flights then hotels then experiences
     status: pending
   - id: intent-classification
-    content: "Replace keyword regex with Haiku call + few-shot, Redis cache, regex fast path"
+    content: Replace keyword regex with Haiku call + few-shot, Redis cache, regex fast path
     status: pending
   - id: wire-semantic-memory
-    content: "Wire recallRelevantMemories into recallUserProfile (exists but never called)"
+    content: Wire recallRelevantMemories into recallUserProfile (exists but never called)
     status: pending
   - id: wire-research
-    content: "Wire researchDestination into planning prompt (exists but never called)"
+    content: Wire researchDestination into planning prompt (exists but never called)
     status: pending
   - id: price-drop-monitor
-    content: "Implement checkPriceDrop in pricing.ts, notify user on >10% drops"
+    content: Implement checkPriceDrop in pricing.ts, notify user on >10% drops
     status: pending
   - id: pdf-itinerary
-    content: "Implement pdf.ts with pdfkit — day-by-day, booking refs, QR codes, upload to R2"
+    content: Implement pdf.ts with pdfkit — day-by-day, booking refs, QR codes, upload to R2
     status: pending
   - id: events-tool
-    content: "Implement events.ts — Ticketmaster/PredictHQ for festivals during travel dates"
+    content: Implement events.ts — Ticketmaster/PredictHQ for festivals during travel dates
     status: pending
   - id: production-hardening
-    content: "Sentry, correlation IDs, Prometheus metrics, PII redaction, session archival"
+    content: Sentry, correlation IDs, Prometheus metrics, PII redaction, session archival
     status: pending
   - id: airbnb-provider
-    content: "Implement Airbnb browser booking provider following Marriott/Booking.com pattern"
+    content: Implement Airbnb browser booking provider following Marriott/Booking.com pattern
     status: pending
   - id: whatsapp-compliance
-    content: "Add opt-in/opt-out handling, template approval tracking per Meta WhatsApp Business policy"
+    content: Add opt-in/opt-out handling, template approval tracking per Meta WhatsApp Business policy
     status: pending
 isProject: false
 ---
@@ -174,6 +174,8 @@ sequenceDiagram
     Destinx->>User: WhatsApp confirmation with PNR
 ```
 
+
+
 ### 2.2 Browser Booking Payments
 
 For hotels/restaurants/experiences via browser automation, the user pays directly on the provider's website (Booking.com, OpenTable, etc.). Destinx never handles the money. Just needs clear UX guidance in the system prompt — tell the user they'll complete payment in the live browser session.
@@ -219,6 +221,7 @@ Google Places API (New) returns a `reservationUri` field for restaurants that su
 Resy has a public API. Implement `src/services/search/resy.ts` with `searchResyRestaurants()` and `bookResyReservation()`. Add a `reserve_restaurant` tool to [src/ai/tools.ts](src/ai/tools.ts) that books directly via the API (similar to how `book_flight` works with Duffel). Add `RESY_API_KEY` to [src/config/env.ts](src/config/env.ts) as optional.
 
 **Layer 3 — OpenTable browser automation (fallback for restaurants not on Resy or Google Reserve)**
+
 - Implement [src/services/booking/providers/opentable.ts](src/services/booking/providers/opentable.ts) following the Marriott browser pattern
 - Search -> select time slot -> pause for user login/details -> confirm
 
@@ -395,6 +398,8 @@ graph TD
     phase1 --> phase2 --> phase3 --> phase4 --> phase5 --> phase6
 ```
 
+
+
 **Biggest bang-for-buck**: Phase 2.1 (Stripe Checkout Sessions) — one afternoon of work removes the entire financial risk of the business.
 
 ---
@@ -409,3 +414,4 @@ graph TD
 
 - **Browserbase plan**: Which tier? Free tier has limited sessions. Production booking automation needs a paid plan.
 - **Service fee amount**: $10 flat? $15? Percentage-based (3-5%)? Start with flat fee, optimize later with data.
+
