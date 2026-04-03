@@ -205,11 +205,12 @@ const TOOL_HANDLERS: Record<
     const cabinClass = input.cabin_class as FlightSearchParams['cabinClass'];
 
     const isTestMode = (process.env.DUFFEL_API_KEY ?? '').startsWith('duffel_test');
+    const forceStripe = process.env.FORCE_STRIPE_FLOW === 'true';
 
-    // --- Stripe-first flow (production) ---
+    // --- Stripe-first flow (production, or forced for testing) ---
     // If Stripe is configured, collect payment before booking with Duffel.
     // The webhook (checkout.session.completed) triggers the actual Duffel booking.
-    if (process.env.STRIPE_SECRET_KEY && !isTestMode) {
+    if (process.env.STRIPE_SECRET_KEY && (!isTestMode || forceStripe)) {
       // Need the price from the cached offer to create an accurate Stripe charge
       let flightAmountRaw: number | null = null;
       let flightCurrency = 'usd';
