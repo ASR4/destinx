@@ -363,9 +363,10 @@ const TOOL_HANDLERS: Record<
         error: 'Do not use initiate_booking for flights. Use the book_flight tool instead — flights are booked directly via the Duffel API.',
       };
     }
-    if (!process.env.BROWSERBASE_API_KEY) {
+    if (!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID) {
       return {
-        error: 'Browser-based booking is not configured on this server. Provide the user with a direct link to book on the provider\'s website.',
+        error:
+          'Browser-based booking is not configured (need BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID). Give the user direct booking links.',
       };
     }
 
