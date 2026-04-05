@@ -152,26 +152,44 @@ function buildDeepLinksForBooking(booking: BookingDetails): DeepLinks {
   }
 }
 
-function formatDeepLinkFallback(deepLinks: DeepLinks, booking: BookingDetails): string {
-  const links: string[] = [];
-  for (const [name, url] of Object.entries(deepLinks)) {
-    if (url) {
-      const label = name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
-      links.push(`• ${label}: ${url}`);
-    }
-  }
+const DEEP_LINK_LABELS: Record<string, string> = {
+  direct: '🏨 Direct hotel site (best rates + perks)',
+  bookingCom: '🅱️ Booking.com',
+  agoda: '🏠 Agoda',
+  skyscanner: '✈️ Skyscanner',
+  googleFlights: '✈️ Google Flights',
+  openTable: '🍽️ OpenTable',
+  getYourGuide: '🎭 GetYourGuide',
+  viator: '🎭 Viator',
+  googleMaps: '📍 Google Maps',
+};
 
-  if (links.length === 0) {
+function formatDeepLinkFallback(deepLinks: DeepLinks, booking: BookingDetails): string {
+  const entries = Object.entries(deepLinks).filter(([, url]) => url);
+
+  if (entries.length === 0) {
     return "I couldn't complete the automated booking. Please try booking directly on the provider's website.";
   }
 
-  return [
-    `🔗 Here are direct links to complete your ${booking.type} booking manually:`,
+  const lines: string[] = [
+    `🔗 *Here are your best options to book:*`,
     '',
-    ...links,
-    '',
-    "Your loyalty points and rewards will still be preserved since you'll be booking directly!",
-  ].join('\n');
+  ];
+
+  entries.forEach(([key, url], idx) => {
+    const label = DEEP_LINK_LABELS[key] ?? key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+    lines.push(`*Option ${idx + 1}:* ${label}`);
+    lines.push(`👉 ${url}`);
+    lines.push('');
+  });
+
+  if (booking.type === 'hotel') {
+    lines.push('💡 The direct hotel site usually has the best rates + loyalty perks!');
+  } else {
+    lines.push("Your loyalty points and rewards will still be preserved since you'll be booking directly!");
+  }
+
+  return lines.join('\n');
 }
 
 async function captureFailureScreenshot(sessionId: string): Promise<string | null> {

@@ -19,10 +19,13 @@ export function buildHotelDeepLinks(details: HotelBookingDetails): DeepLinks {
     no_rooms: '1',
   });
 
+  const directUrl = details.propertyName
+    ? `https://www.google.com/search?q=${encodeURIComponent(details.propertyName + ' official site book')}&btnI=1`
+    : null;
+
   return {
+    direct: directUrl,
     bookingCom: `https://www.booking.com/searchresults.html?${bookingComParams}`,
-    agoda: `https://www.agoda.com/search?city=${encodeURIComponent(details.destination)}&checkIn=${details.checkIn}&checkOut=${details.checkOut}&rooms=1&adults=${details.guests || 2}`,
-    direct: null,
   };
 }
 

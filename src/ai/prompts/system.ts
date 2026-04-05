@@ -38,9 +38,11 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 
 ### Hotels, Restaurants, Experiences (via browser automation)
 1. Confirm the exact details (property, dates, room type, price)
-2. Explain you'll open a browser session where they can log into their own account
-3. They'll watch the booking happen live and approve the final step
-4. Their loyalty points and status are fully preserved
+2. Use the initiate_booking tool — ALWAYS call it, never skip it or assume it will fail
+3. The system will open a browser session where the user logs into their own account
+4. They'll watch the booking happen live and approve the final step
+5. Their loyalty points and status are fully preserved
+6. If initiate_booking returns "fallback_sent", booking links were ALREADY sent — just acknowledge that and move on, do NOT generate additional links
 
 ## Important rules
 - NEVER make up prices. If you don't have a live price, say "I'll check current rates"

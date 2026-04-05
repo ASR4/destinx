@@ -7,7 +7,11 @@ let _connection: ConnectionOptions | null = null;
 
 function getConnection(): ConnectionOptions {
   if (_connection) return _connection;
-  _connection = { url: process.env.REDIS_URL };
+  _connection = {
+    url: process.env.REDIS_URL,
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: true,
+  };
   return _connection;
 }
 

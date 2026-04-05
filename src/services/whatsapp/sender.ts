@@ -6,6 +6,19 @@ import type {
 import { logger } from '../../utils/logger.js';
 import { WHATSAPP } from '../../config/constants.js';
 
+/**
+ * Fix markdown formatting for WhatsApp compatibility.
+ * - Converts **double bold** → *single bold* (WhatsApp only supports single)
+ * - Converts __underscores__ → _italic_ (WhatsApp format)
+ * - Strips ### markdown headers (not supported in WhatsApp)
+ */
+function cleanForWhatsApp(text: string): string {
+  return text
+    .replace(/\*\*([^*\n]+)\*\*/g, '*$1*')   // **bold** → *bold*
+    .replace(/^#{1,3}\s+/gm, '')               // ### Header → Header
+    .replace(/__([^_\n]+)__/g, '_$1_');         // __text__ → _text_
+}
+
 let _client: ReturnType<typeof Twilio> | null = null;
 
 function getClient() {
@@ -22,7 +35,8 @@ function getFromNumber(): string {
 }
 
 export async function sendText(to: string, body: string): Promise<void> {
-  const truncated = body.slice(0, WHATSAPP.MAX_MESSAGE_LENGTH);
+  const cleaned = cleanForWhatsApp(body);
+  const truncated = cleaned.slice(0, WHATSAPP.MAX_MESSAGE_LENGTH);
   try {
     await getClient().messages.create({
       body: truncated,
