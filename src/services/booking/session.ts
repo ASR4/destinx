@@ -33,7 +33,7 @@ export async function createBrowserSession(): Promise<BrowserSession> {
   const session = await bb.sessions.create({
     projectId,
     browserSettings: {
-      advancedStealth: true,
+      // TODO(prod): Re-enable advancedStealth: true when on Browserbase Enterprise plan
       solveCaptchas: true,
     },
     keepAlive: true,

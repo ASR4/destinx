@@ -19,11 +19,11 @@ export function normalizePhone(phone: string): string {
 }
 
 /**
- * Format a phone number back to WhatsApp's expected "whatsapp:+..." format
+ * Format a phone number back to WhatsApp's expected "whatsapp:+..." format.
+ * Idempotent — safe to call on values that already have the prefix.
  */
 export function toWhatsAppAddress(phone: string): string {
-  const normalized = normalizePhone(phone);
-  return normalized.startsWith('whatsapp:')
-    ? normalized
-    : `whatsapp:${normalized}`;
+  const stripped = phone.replace(/^whatsapp:/, '');
+  const normalized = normalizePhone(stripped);
+  return `whatsapp:${normalized}`;
 }
