@@ -180,21 +180,29 @@ export function startWorkers(): void {
   }, QUEUE.BOOKING_CONCURRENCY);
 
   makeWorker('memory', async (job) => {
-    if (job.name === 'confidence-decay') {
-      const { runConfidenceDecay } = await import('./scheduler.js');
-      await runConfidenceDecay();
-    } else if (job.name === 'post-trip-check') {
-      const { runPostTripCheck } = await import('./scheduler.js');
-      await runPostTripCheck();
-    } else {
-      const { processMemoryExtraction } = await import('./workers/memory-extract.js');
-      await processMemoryExtraction(job.data);
+    try {
+      if (job.name === 'confidence-decay') {
+        const { runConfidenceDecay } = await import('./scheduler.js');
+        await runConfidenceDecay();
+      } else if (job.name === 'post-trip-check') {
+        const { runPostTripCheck } = await import('./scheduler.js');
+        await runPostTripCheck();
+      } else {
+        const { processMemoryExtraction } = await import('./workers/memory-extract.js');
+        await processMemoryExtraction(job.data);
+      }
+    } catch (err) {
+      logger.error({ err, jobName: job.name, jobId: job.id }, 'Memory worker job failed');
     }
   }, QUEUE.MEMORY_CONCURRENCY);
 
   makeWorker('price-check', async (job) => {
-    const { processPriceCheck } = await import('./workers/price-check.js');
-    await processPriceCheck(job.data);
+    try {
+      const { processPriceCheck } = await import('./workers/price-check.js');
+      await processPriceCheck(job.data);
+    } catch (err) {
+      logger.error({ err, jobName: job.name, jobId: job.id }, 'Price-check worker job failed');
+    }
   }, 2);
 
   logger.info('All queue workers started');
