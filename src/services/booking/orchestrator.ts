@@ -36,7 +36,8 @@ export async function startBookingSession(
   try {
     session = await createBrowserSession();
   } catch (err) {
-    logger.error({ err }, 'Failed to create browser session — falling back to deep links');
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ error: errMsg, bookingType: booking.type }, `Failed to create browser session — falling back to deep links: ${errMsg}`);
     const deepLinks = buildDeepLinksForBooking(booking);
     const deepLinkMsg = formatDeepLinkFallback(deepLinks, booking);
     await sendText(whatsappTo, deepLinkMsg);

@@ -397,7 +397,10 @@ const TOOL_HANDLERS: Record<
     // Session creation failed (deep-link fallback already sent to user)
     if (!sessionId) {
       await releaseSystemBrowserSlot();
-      return { status: 'fallback_sent', message: 'Direct booking links have been sent to the user.' };
+      return {
+        status: 'fallback_sent',
+        message: 'I already sent the user direct booking links via WhatsApp. Do NOT send additional links or booking instructions — just let them know you sent the links and offer to help with anything else.',
+      };
     }
 
     // Enqueue the actual browser automation — this is what was missing

@@ -19,10 +19,19 @@ export interface BrowserSession {
  * Create a new Browserbase session with stealth mode, proxy, and CAPTCHA solving.
  */
 export async function createBrowserSession(): Promise<BrowserSession> {
+  const apiKey = process.env.BROWSERBASE_API_KEY;
+  const projectId = process.env.BROWSERBASE_PROJECT_ID;
+
+  if (!apiKey || !projectId) {
+    throw new Error(`Browserbase not configured: apiKey=${apiKey ? 'set' : 'MISSING'}, projectId=${projectId ? 'set' : 'MISSING'}`);
+  }
+
   const bb = getBrowserbase();
 
+  logger.info({ projectId }, 'Creating Browserbase session');
+
   const session = await bb.sessions.create({
-    projectId: process.env.BROWSERBASE_PROJECT_ID!,
+    projectId,
     browserSettings: {
       advancedStealth: true,
       solveCaptchas: true,
