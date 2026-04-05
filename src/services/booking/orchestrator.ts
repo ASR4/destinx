@@ -77,7 +77,9 @@ export async function executeBookingSession(
       env: 'BROWSERBASE',
       browserbaseSessionID: sessionId,
     } as ConstructorParameters<typeof Stagehand>[0]);
+    logger.info({ sessionId, type: booking.type }, 'Stagehand connecting to Browserbase session');
     await stagehand.init();
+    logger.info({ sessionId, type: booking.type }, 'Stagehand ready — running provider booking flow');
 
     const result = await executeProviderFlow(stagehand, booking, sessionId);
 

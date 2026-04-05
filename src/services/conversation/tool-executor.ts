@@ -358,12 +358,34 @@ const TOOL_HANDLERS: Record<
   },
 
   initiate_booking: async (input, ctx) => {
+    const details = (input.details as Record<string, unknown>) ?? {};
+    logger.info(
+      {
+        userId: ctx.userId,
+        conversationId: ctx.conversationId,
+        bookingType: input.booking_type,
+        provider: input.provider,
+        hasPropertyName: typeof details.propertyName === 'string',
+        hasRestaurantName: typeof details.restaurantName === 'string',
+      },
+      'initiate_booking tool invoked',
+    );
+
     if (input.booking_type === 'flight') {
+      logger.warn({ userId: ctx.userId }, 'initiate_booking rejected — use book_flight for flights');
       return {
         error: 'Do not use initiate_booking for flights. Use the book_flight tool instead — flights are booked directly via the Duffel API.',
       };
     }
     if (!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID) {
+      logger.warn(
+        {
+          userId: ctx.userId,
+          hasApiKey: Boolean(process.env.BROWSERBASE_API_KEY),
+          hasProjectId: Boolean(process.env.BROWSERBASE_PROJECT_ID),
+        },
+        'initiate_booking aborted — Browserbase env not fully configured',
+      );
       return {
         error:
           'Browser-based booking is not configured (need BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID). Give the user direct booking links.',
@@ -376,18 +398,25 @@ const TOOL_HANDLERS: Record<
     ]);
 
     if (!userLimit.allowed) {
+      logger.warn({ userId: ctx.userId }, 'initiate_booking blocked — per-user browser rate limit');
       return { error: RATE_LIMIT_MESSAGES.browser };
     }
     if (!systemSlot.allowed) {
       await releaseSystemBrowserSlot();
+      logger.warn('initiate_booking blocked — system browser concurrency limit');
       return { error: RATE_LIMIT_MESSAGES.system };
     }
 
     const bookingDetails = {
       type: input.booking_type,
-      ...(input.details as Record<string, unknown>),
+      ...details,
       userPhone: ctx.userPhone,
     } as any;
+
+    logger.info(
+      { userId: ctx.userId, bookingType: bookingDetails.type },
+      'initiate_booking creating Browserbase session',
+    );
 
     const { sessionId, liveViewUrl } = await startBookingSession(
       ctx.userId,
@@ -398,19 +427,32 @@ const TOOL_HANDLERS: Record<
     // Session creation failed (deep-link fallback already sent to user)
     if (!sessionId) {
       await releaseSystemBrowserSlot();
+      logger.error(
+        { userId: ctx.userId, bookingType: bookingDetails.type },
+        'initiate_booking session creation failed — deep-link fallback already sent to user',
+      );
       return {
         status: 'fallback_sent',
         message: 'I already sent the user direct booking links via WhatsApp. Do NOT send additional links or booking instructions — just let them know you sent the links and offer to help with anything else.',
       };
     }
 
-    // Enqueue the actual browser automation — this is what was missing
-    await bookingQueue.add('execute', {
+    const job = await bookingQueue.add('execute', {
       sessionId,
       userId: ctx.userId,
       userPhone: ctx.userPhone,
       booking: bookingDetails,
     });
+
+    logger.info(
+      {
+        userId: ctx.userId,
+        sessionId,
+        jobId: job.id,
+        bookingType: bookingDetails.type,
+      },
+      'initiate_booking Browserbase session ready — booking job enqueued for Stagehand automation',
+    );
 
     return {
       status: 'session_created',

@@ -15,8 +15,12 @@ export async function processBrowserBooking(
   data: BrowserBookingJob,
 ): Promise<void> {
   logger.info(
-    { userId: data.userId, sessionId: data.sessionId },
-    'Browser booking started',
+    {
+      userId: data.userId,
+      sessionId: data.sessionId,
+      bookingType: data.booking.type,
+    },
+    'Browserbase booking worker — starting Stagehand automation for session',
   );
 
   try {
