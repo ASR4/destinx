@@ -120,12 +120,15 @@ export async function generateTripPlan(
   try {
     parsed = JSON.parse(jsonStr);
   } catch {
-    logger.warn('Failed to parse plan JSON, returning raw text as overview');
+    logger.warn({ jsonStr: jsonStr.slice(0, 500) }, 'Failed to parse plan JSON, returning raw text as overview');
     return { days: [], overview: rawPlanText };
   }
 
-  // Validate against the strict Zod schema
-  const validation = validateTripPlan(parsed);
+  // Handle case where Claude wraps the plan in an extra key (e.g., { itinerary: { days: [...] } })
+  const unwrapped = unwrapPlan(parsed);
+
+  // Validate against the Zod schema (strict first, then lenient)
+  const validation = validateTripPlan(unwrapped);
   if (validation.success) {
     return validation.plan;
   }
@@ -160,7 +163,29 @@ export async function generateTripPlan(
   }
 
   // Last resort: return whatever we have
-  return (parsed as Itinerary) ?? { days: [], overview: rawPlanText };
+  return (unwrapped as Itinerary) ?? { days: [], overview: rawPlanText };
+}
+
+/**
+ * Claude sometimes nests the plan inside an extra key like { itinerary: { days: [...] } }
+ * or { trip_plan: { days: [...] } }. Unwrap it if so.
+ */
+function unwrapPlan(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  const obj = parsed as Record<string, unknown>;
+
+  // Already has `days` — use as-is
+  if (Array.isArray(obj.days)) return parsed;
+
+  // Check common wrapper keys
+  for (const key of ['itinerary', 'trip_plan', 'plan', 'trip']) {
+    const inner = obj[key];
+    if (inner && typeof inner === 'object' && Array.isArray((inner as Record<string, unknown>).days)) {
+      return inner;
+    }
+  }
+
+  return parsed;
 }
 
 function extractJson(text: string): string {

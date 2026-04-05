@@ -88,15 +88,16 @@ function attachWorkerEvents(worker: Worker, name: string): void {
   worker.on('failed', (job, err) => {
     const attemptsMade = job?.attemptsMade ?? 0;
     const maxAttempts = job?.opts?.attempts ?? retryOptions.attempts;
+    const errMsg = err instanceof Error ? err.message : String(err);
     if (attemptsMade >= maxAttempts) {
       logger.error(
-        { jobId: job?.id, jobName: job?.name, err, attemptsMade },
-        `[DLQ] ${name} job permanently failed after ${attemptsMade} attempts`,
+        { jobId: job?.id, jobName: job?.name, attemptsMade, error: errMsg },
+        `[DLQ] ${name} job permanently failed after ${attemptsMade} attempts: ${errMsg}`,
       );
     } else {
       logger.warn(
-        { jobId: job?.id, err, attemptsMade, maxAttempts },
-        `${name} job failed — will retry`,
+        { jobId: job?.id, jobName: job?.name, attemptsMade, maxAttempts, error: errMsg },
+        `${name} job failed — will retry (${attemptsMade}/${maxAttempts}): ${errMsg}`,
       );
     }
   });

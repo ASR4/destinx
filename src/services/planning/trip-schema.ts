@@ -18,8 +18,8 @@ const dayItemSchema = z.object({
   description: z.string().optional(),
   duration_min: z.number().optional(),
   price: priceSchema.optional(),
-  booking_url: z.string().url().optional(),
-  maps_url: z.string().url().optional(),
+  booking_url: z.string().optional(),
+  maps_url: z.string().optional(),
   rating: z.number().min(0).max(5).optional(),
   notes: z.string().optional(),
 });
@@ -50,6 +50,42 @@ export const tripPlanSchema = z.object({
   important_notes: z.array(z.string()).optional(),
 });
 
+/**
+ * Lenient schema that accepts common Claude output variations.
+ * Tries the strict schema first, then relaxes field-by-field.
+ */
+const lenientDayItemSchema = z.object({
+  time: z.string().default('TBD'),
+  type: z.string().default('experience'),
+  name: z.string(),
+  description: z.string().optional(),
+  duration_min: z.number().optional(),
+  price: z.any().optional(),
+  booking_url: z.string().optional(),
+  maps_url: z.string().optional(),
+  rating: z.number().optional(),
+  notes: z.string().optional(),
+});
+
+const lenientDaySchema = z.object({
+  date: z.string(),
+  day_number: z.coerce.number().int().positive(),
+  theme: z.string().optional(),
+  items: z.array(lenientDayItemSchema).default([]),
+  accommodation: z.any().optional(),
+  day_total: z.any().optional(),
+});
+
+const lenientTripSchema = z.object({
+  days: z.array(lenientDaySchema).min(1),
+  overview: z.string().optional(),
+  total_budget: z.any().optional(),
+  packing_tips: z.array(z.string()).optional(),
+  important_notes: z.array(z.string()).optional(),
+});
+
+export { lenientTripSchema };
+
 export type ValidatedTripPlan = z.infer<typeof tripPlanSchema>;
 export type ValidatedDayPlan = z.infer<typeof dayPlanSchema>;
 
@@ -60,10 +96,18 @@ export type ValidatedDayPlan = z.infer<typeof dayPlanSchema>;
 export function validateTripPlan(
   raw: unknown,
 ): { success: true; plan: ValidatedTripPlan } | { success: false; errors: string[] } {
+  // Try strict schema first
   const result = tripPlanSchema.safeParse(raw);
   if (result.success) {
     return { success: true, plan: result.data };
   }
+
+  // Try lenient schema — accepts looser types, coerces day_number, relaxes URLs
+  const lenient = lenientTripSchema.safeParse(raw);
+  if (lenient.success && lenient.data.days.length > 0) {
+    return { success: true, plan: lenient.data as unknown as ValidatedTripPlan };
+  }
+
   return {
     success: false,
     errors: result.error.issues.map(

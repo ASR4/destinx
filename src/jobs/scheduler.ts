@@ -14,6 +14,10 @@ import { logger } from '../utils/logger.js';
  * - Post-trip feedback: Check for recently ended trips every hour
  */
 export async function startScheduler(): Promise<void> {
+  // Remove stale repeatable jobs from previous deploys before adding fresh ones
+  await cleanRepeatableJobs(priceCheckQueue);
+  await cleanRepeatableJobs(memoryQueue);
+
   // Price monitoring — every 6 hours
   await priceCheckQueue.add(
     'check-all-prices',
@@ -36,6 +40,20 @@ export async function startScheduler(): Promise<void> {
   );
 
   logger.info('Scheduler started with repeatable jobs');
+}
+
+async function cleanRepeatableJobs(queue: typeof priceCheckQueue): Promise<void> {
+  try {
+    const existing = await queue.getRepeatableJobs();
+    for (const job of existing) {
+      await queue.removeRepeatableByKey(job.key);
+    }
+    if (existing.length > 0) {
+      logger.debug({ queue: queue.name, removed: existing.length }, 'Cleaned stale repeatable jobs');
+    }
+  } catch (err) {
+    logger.warn({ err, queue: queue.name }, 'Failed to clean repeatable jobs');
+  }
 }
 
 /**
