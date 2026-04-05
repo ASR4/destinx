@@ -10,7 +10,13 @@ export function getRedisClient(): Redis | null {
   if (_redis) return _redis;
   if (!process.env.REDIS_URL) return null;
   try {
-    _redis = new Redis(process.env.REDIS_URL, { lazyConnect: true, enableOfflineQueue: false });
+    // enableOfflineQueue must stay true: rate-limiter + intent cache run during BullMQ jobs.
+    // If false, a reconnecting/not-ready socket throws "Stream isn't writeable and enableOfflineQueue options is false".
+    _redis = new Redis(process.env.REDIS_URL, {
+      lazyConnect: true,
+      enableOfflineQueue: true,
+      maxRetriesPerRequest: 20,
+    });
     _redis.on('error', () => {}); // suppress unhandled error events
     return _redis;
   } catch {
