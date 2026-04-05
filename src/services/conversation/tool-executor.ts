@@ -33,6 +33,50 @@ interface ToolCallResult {
   result: string;
 }
 
+/**
+ * Map Claude's snake_case booking details to the camelCase interfaces
+ * expected by the booking providers and deep link builders.
+ */
+function mapBookingDetails(bookingType: string, details: Record<string, unknown>, userPhone: string): any {
+  const d = details;
+  switch (bookingType) {
+    case 'hotel':
+      return {
+        type: 'hotel',
+        destination: d.destination ?? d.location ?? '',
+        propertyName: d.property_name ?? d.propertyName ?? d.hotel_name ?? d.name ?? '',
+        checkIn: d.check_in ?? d.checkIn ?? d.checkin ?? '',
+        checkOut: d.check_out ?? d.checkOut ?? d.checkout ?? '',
+        guests: d.guests ?? d.guest_count ?? 2,
+        roomType: d.room_type ?? d.roomType ?? undefined,
+        specialRequests: d.special_requests ?? d.specialRequests ?? undefined,
+        userPhone,
+      };
+    case 'restaurant':
+      return {
+        type: 'restaurant',
+        restaurantName: d.restaurant_name ?? d.restaurantName ?? d.name ?? '',
+        location: d.location ?? d.destination ?? '',
+        date: d.date ?? '',
+        time: d.time ?? '',
+        partySize: d.party_size ?? d.partySize ?? d.guests ?? 2,
+        specialRequests: d.special_requests ?? d.specialRequests ?? undefined,
+        userPhone,
+      };
+    case 'experience':
+      return {
+        type: 'experience',
+        experienceName: d.experience_name ?? d.experienceName ?? d.name ?? '',
+        destination: d.destination ?? d.location ?? '',
+        date: d.date ?? '',
+        participants: d.participants ?? d.guests ?? 1,
+        userPhone,
+      };
+    default:
+      return { type: bookingType, ...details, userPhone };
+  }
+}
+
 export interface ToolContext {
   userId: string;
   userPhone: string;
@@ -407,18 +451,14 @@ const TOOL_HANDLERS: Record<
       return { error: RATE_LIMIT_MESSAGES.system };
     }
 
-    const bookingDetails = {
-      type: input.booking_type,
-      ...details,
-      userPhone: ctx.userPhone,
-    } as any;
+    const bookingDetails = mapBookingDetails(input.booking_type as string, details, ctx.userPhone);
 
     logger.info(
       { userId: ctx.userId, bookingType: bookingDetails.type },
       'initiate_booking creating Browserbase session',
     );
 
-    const { sessionId, liveViewUrl } = await startBookingSession(
+    const { sessionId } = await startBookingSession(
       ctx.userId,
       ctx.userPhone,
       bookingDetails,
@@ -455,10 +495,9 @@ const TOOL_HANDLERS: Record<
     );
 
     return {
-      status: 'session_created',
+      status: 'booking_in_progress',
       sessionId,
-      liveViewUrl,
-      message: 'Browser booking session started. The automation is running — confirmation will be sent to the user when complete.',
+      message: 'Booking automation is now running. The user will receive screenshot updates as the booking progresses, and a confirmation when complete. Tell them the booking is in progress and offer to help with other parts of the trip in the meantime. Do NOT send any booking links.',
     };
   },
 

@@ -1,6 +1,6 @@
 import { Stagehand } from '@browserbasehq/stagehand';
 import { createBrowserSession, destroySession } from './session.js';
-import { getEmbeddableLiveViewUrl } from './live-view.js';
+// Live view URL is not used currently — screenshots are sent via WhatsApp instead
 import { sendText, sendMedia } from '../whatsapp/sender.js';
 import { toWhatsAppAddress } from '../../utils/phone.js';
 import {
@@ -27,7 +27,7 @@ export async function startBookingSession(
   userPhone: string,
   booking: BookingDetails,
   bookingId?: string,
-): Promise<{ sessionId: string; liveViewUrl: string }> {
+): Promise<{ sessionId: string }> {
   logger.info({ userId, type: booking.type }, 'Starting booking session');
   const whatsappTo = toWhatsAppAddress(userPhone);
 
@@ -46,17 +46,10 @@ export async function startBookingSession(
       await recordFailure(bookingId, 'session_creation_failed', String(err));
     }
 
-    return { sessionId: '', liveViewUrl: '' };
+    return { sessionId: '' };
   }
 
-  const liveViewUrl = getEmbeddableLiveViewUrl(session.id);
-
-  await sendText(
-    whatsappTo,
-    `🔗 Your booking session is ready!\n\nTap the link below to watch and control the booking:\n${liveViewUrl}\n\nI'll navigate to the booking site — you'll need to log in with your account to keep your loyalty points.`,
-  );
-
-  return { sessionId: session.id, liveViewUrl };
+  return { sessionId: session.id };
 }
 
 /**
@@ -73,9 +66,21 @@ export async function executeBookingSession(
   const whatsappTo = toWhatsAppAddress(userPhone);
 
   try {
+    const modelApiKey = process.env.OPENAI_API_KEY;
+    if (!modelApiKey) {
+      throw new Error('OPENAI_API_KEY is required for Stagehand browser automation (powers act/observe/extract)');
+    }
+
     const stagehand = new Stagehand({
       env: 'BROWSERBASE',
       browserbaseSessionID: sessionId,
+      apiKey: process.env.BROWSERBASE_API_KEY,
+      projectId: process.env.BROWSERBASE_PROJECT_ID,
+      model: {
+        modelName: 'gpt-4o-mini' as const,
+        apiKey: modelApiKey,
+      },
+      verbose: 0,
     } as ConstructorParameters<typeof Stagehand>[0]);
     logger.info({ sessionId, type: booking.type }, 'Stagehand connecting to Browserbase session');
     await stagehand.init();
@@ -97,7 +102,8 @@ export async function executeBookingSession(
     return result;
   } catch (err) {
     // Layer 2: Capture screenshot and send fallback
-    logger.error({ err, sessionId }, 'Booking flow failed');
+    const errMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    logger.error({ error: errMsg, sessionId, bookingType: booking.type }, `Booking flow failed: ${errMsg}`);
 
     try {
       const screenshotUrl = await captureFailureScreenshot(sessionId);
@@ -196,9 +202,16 @@ function formatDeepLinkFallback(deepLinks: DeepLinks, booking: BookingDetails): 
 
 async function captureFailureScreenshot(sessionId: string): Promise<string | null> {
   try {
+    const modelApiKey = process.env.OPENAI_API_KEY;
+    if (!modelApiKey) return null;
+
     const stagehand = new Stagehand({
       env: 'BROWSERBASE',
       browserbaseSessionID: sessionId,
+      apiKey: process.env.BROWSERBASE_API_KEY,
+      projectId: process.env.BROWSERBASE_PROJECT_ID,
+      model: { modelName: 'gpt-4o-mini' as const, apiKey: modelApiKey },
+      verbose: 0,
     } as ConstructorParameters<typeof Stagehand>[0]);
     await stagehand.init();
     const page = stagehand.context.activePage()!;

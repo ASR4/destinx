@@ -51,7 +51,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
 
     await page.goto('https://www.marriott.com');
     await stagehand.act('close any cookie consent or popup banners');
-    await this.captureStep(stagehand, sid, '01_homepage');
+    await this.captureStep(stagehand, sid, '01_homepage', d.userPhone);
 
     await stagehand.act(
       `search for hotels in "${d.destination}" with check-in ${d.checkIn} and check-out ${d.checkOut} for ${d.guests} guests`,
@@ -59,7 +59,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
 
     // Wait for results to load
     await new Promise((r) => setTimeout(r, 3000));
-    await this.captureStep(stagehand, sid, '02_search_results');
+    await this.captureStep(stagehand, sid, '02_search_results', d.userPhone);
 
     if (d.propertyName) {
       await stagehand.act(
@@ -70,7 +70,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
     await stagehand.act(
       `select a ${d.roomType || 'standard'} room and click to book it`,
     );
-    await this.captureStep(stagehand, sid, '03_room_selected');
+    await this.captureStep(stagehand, sid, '03_room_selected', d.userPhone);
 
     const needsLogin = await stagehand.observe(
       'Is there a sign-in or login form visible on the page?',
@@ -88,12 +88,12 @@ export class MarriottBookingProvider extends BaseBookingProvider {
       });
 
       if (!loggedIn) {
-        await this.captureStep(stagehand, sid, '04_login_timeout');
+        await this.captureStep(stagehand, sid, '04_login_timeout', d.userPhone);
         return { status: 'timeout', error: 'Login timed out' };
       }
 
       await sendText(d.userPhone, '✅ Logged in! Continuing with the booking...');
-      await this.captureStep(stagehand, sid, '04_logged_in');
+      await this.captureStep(stagehand, sid, '04_logged_in', d.userPhone);
     }
 
     if (d.specialRequests) {
@@ -103,7 +103,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
     await stagehand.act(
       'proceed to the final booking review or confirmation page',
     );
-    await this.captureStep(stagehand, sid, '05_review_page');
+    await this.captureStep(stagehand, sid, '05_review_page', d.userPhone);
 
     const summaryResult = await stagehand.extract(
       'Extract the booking summary including: hotel name, dates, room type, total price, loyalty points earned, cancellation policy',
@@ -139,7 +139,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
     });
 
     if (confirmed) {
-      await this.captureStep(stagehand, sid, '06_confirmed');
+      await this.captureStep(stagehand, sid, '06_confirmed', d.userPhone);
       const confResult = await stagehand.extract(
         'Extract the booking confirmation number or reference code',
       );
@@ -165,7 +165,7 @@ export class MarriottBookingProvider extends BaseBookingProvider {
       };
     }
 
-    await this.captureStep(stagehand, sid, '06_timeout');
+    await this.captureStep(stagehand, sid, '06_timeout', d.userPhone);
     return { status: 'timeout', summary };
   }
 }

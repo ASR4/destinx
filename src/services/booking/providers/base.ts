@@ -1,9 +1,18 @@
 import type { Stagehand } from '@browserbasehq/stagehand';
 import type { BookingResult } from '../../../types/booking.js';
-import { sendText } from '../../whatsapp/sender.js';
+import { sendText, sendMedia } from '../../whatsapp/sender.js';
 import { uploadScreenshot } from '../../storage/r2.js';
 import { BOOKING } from '../../../config/constants.js';
 import { logger } from '../../../utils/logger.js';
+
+const STEP_STATUS: Record<string, string> = {
+  '01_homepage': '🌐 Navigating to the booking site...',
+  '02_search_results': '🔍 Searching for your property...',
+  '03_room_selected': '🛏️ Found it! Selecting your room...',
+  '04_logged_in': '✅ Logged in! Filling in your details...',
+  '05_review_page': '📋 Almost there — reviewing your booking...',
+  '06_confirmed': '🎉 Booking confirmed!',
+};
 
 export abstract class BaseBookingProvider {
   abstract readonly providerName: string;
@@ -133,12 +142,24 @@ export abstract class BaseBookingProvider {
     stagehand: Stagehand,
     sessionId: string,
     stepName: string,
+    userPhone?: string,
   ): Promise<string | null> {
     try {
       const page = stagehand.context.activePage()!;
       const buffer = await page.screenshot({ type: 'png' });
       const url = await uploadScreenshot(Buffer.from(buffer), sessionId, stepName);
-      if (url) logger.debug({ step: stepName, url }, 'Step screenshot uploaded');
+      if (!url) return null;
+
+      logger.debug({ step: stepName, url }, 'Step screenshot uploaded');
+
+      // Send screenshot to user as a progress update
+      if (userPhone) {
+        const statusMsg = STEP_STATUS[stepName] ?? `📸 Booking progress: ${stepName.replace(/_/g, ' ')}`;
+        await sendMedia(userPhone, url, statusMsg).catch((err) =>
+          logger.warn({ err, step: stepName }, 'Failed to send step screenshot to user'),
+        );
+      }
+
       return url;
     } catch (err) {
       logger.debug({ err, step: stepName }, 'Screenshot capture failed (non-critical)');

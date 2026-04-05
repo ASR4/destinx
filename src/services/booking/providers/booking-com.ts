@@ -50,7 +50,7 @@ export class BookingComProvider extends BaseBookingProvider {
 
     await page.goto('https://www.booking.com');
     await stagehand.act('close any cookie consent banner or sign-in popup if present');
-    await this.captureStep(stagehand, sid, '01_homepage');
+    await this.captureStep(stagehand, sid, '01_homepage', d.userPhone);
 
     // Search for the property
     await this.actWithRetry(
@@ -60,7 +60,7 @@ export class BookingComProvider extends BaseBookingProvider {
 
     // Wait for search results
     await new Promise((r) => setTimeout(r, 3000));
-    await this.captureStep(stagehand, sid, '02_search_results');
+    await this.captureStep(stagehand, sid, '02_search_results', d.userPhone);
 
     await this.handleCaptcha(stagehand, d.userPhone);
 
@@ -78,7 +78,7 @@ export class BookingComProvider extends BaseBookingProvider {
       stagehand,
       `select the ${d.roomType || 'cheapest available'} room and click "Reserve" or "I'll reserve" button`,
     );
-    await this.captureStep(stagehand, sid, '03_room_selected');
+    await this.captureStep(stagehand, sid, '03_room_selected', d.userPhone);
 
     // Check for login prompt
     const needsLogin = await stagehand.observe(
@@ -109,7 +109,7 @@ export class BookingComProvider extends BaseBookingProvider {
 
     // Navigate to final review page
     await this.actWithRetry(stagehand, 'click the "Next" or "Continue" button to proceed to the final booking summary');
-    await this.captureStep(stagehand, sid, '05_review_page');
+    await this.captureStep(stagehand, sid, '05_review_page', d.userPhone);
 
     // Extract booking summary
     const summaryResult = await stagehand.extract(
@@ -154,7 +154,7 @@ export class BookingComProvider extends BaseBookingProvider {
     });
 
     if (confirmed) {
-      await this.captureStep(stagehand, sid, '06_confirmed');
+      await this.captureStep(stagehand, sid, '06_confirmed', d.userPhone);
       const confResult = await stagehand.extract(
         'Extract the booking confirmation number or reservation number',
       );
