@@ -1,8 +1,8 @@
 # Destinx — AI Travel Agent
 
-An AI-powered travel agent that operates entirely through WhatsApp. It plans end-to-end trips, searches flights/hotels/restaurants/experiences, books via API or browser automation (preserving user loyalty accounts), remembers preferences across conversations, and handles payments through Stripe.
+An AI-powered travel agent that operates entirely through WhatsApp. It plans end-to-end trips, searches flights/hotels/restaurants/experiences, books via API or deep links, remembers preferences across conversations with confidence-weighted memory, validates trip plans, sends proactive notifications, and handles payments through Stripe.
 
-Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, Browserbase + Stagehand, and Duffel.
+Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, Duffel, and Stripe.
 
 ---
 
@@ -19,6 +19,7 @@ Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, B
 - [API Endpoints](#api-endpoints)
 - [How It Works](#how-it-works)
 - [External Services](#external-services)
+- [Testing](#testing)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -26,18 +27,68 @@ Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, B
 
 ## Features
 
+### Core
 - **WhatsApp-native** — Users interact entirely through WhatsApp with interactive buttons and list messages
 - **AI trip planning** — Claude generates multi-day itineraries grounded in real-world research (Google Places, Brave Search, weather data)
 - **Flight search & booking** — Duffel API integration for searching and booking flights across 300+ airlines
-- **Browser automation** — Books hotels, restaurants, and experiences on real websites (Booking.com, Airbnb, OpenTable, Viator) using the user's own accounts, preserving loyalty points
 - **Payment processing** — Stripe Checkout for flight payments with per-booking service fees
-- **Semantic memory** — Remembers user preferences across conversations using pgvector embeddings (dietary restrictions, airline preferences, budget, travel style)
+
+### Context Engineering
+- **Three-tier context windowing** — Recent messages kept verbatim, mid-range messages condensed, old messages summarized by Haiku to stay within 80K token budget
+- **Trip state injection** — Active trip plan appended at the END of context on every turn, preventing "lost in the middle" drift in long planning sessions
+- **Stable tool set** — All 15 tools registered on every Claude call for consistent tool selection accuracy
+- **Concise tool results** — Search results condensed to top 3-5 with key fields before entering context
+
+### Memory & Personalization
+- **Confidence-weighted preferences** — Explicit preferences scored at 0.7, inferred at 0.4, with confirmation bumps (+0.2) and decay over time
+- **Contradiction detection** — Detects when a new preference contradicts an existing one (e.g., vegetarian user asking for steakhouse) and prompts natural clarification
+- **Semantic memory** — pgvector embeddings for contextual recall with similarity + recency + confidence reranking
+- **Confidence-weighted prompting** — High-confidence preferences stated as fact, medium as observed tendencies, low as tentative
+
+### Onboarding
+- **Smart new user detection** — Automatically enters onboarding mode for users with fewer than 4 high-confidence preferences
+- **Value-first approach** — Gives genuinely useful travel insights before extracting preferences
+- **Natural extraction** — Max 2 questions per message, weaved into conversation naturally
+- **Invisible transition** — Seamlessly switches to regular prompt once enough preferences are learned
+
+### Trip Validation
+- **Logistics checking** — Validates travel times between consecutive activities, flags overlaps
+- **Budget checking** — Flags when total costs exceed stated budget by more than 15%
+- **Pace checking** — Ensures activity count matches user's pace preference (packed/balanced/relaxed)
+- **Venue verification** — Google Places API lookup to catch closed or non-existent venues
+- **Auto-fix** — Automatically shifts overlapping activities; flags unfixable issues for Claude to address
+
+### Booking
+- **Smart deep links** — Pre-filled booking links for Marriott, Hilton, Hyatt, Airbnb, Booking.com, OpenTable, Resy, GetYourGuide, Viator, Skyscanner, Google Flights, and Kayak
+- **Booking tracking** — Deep-link bookings tracked as `link_sent`, updated to `user_confirmed` when user reports back
+- **Booking confirmation tool** — Claude can record user-confirmed bookings with reference numbers
+- **Browser automation** — Available behind feature flag for hotel/restaurant/experience booking on real websites
+
+### Proactive Notifications
+- **Price alerts** — Price drop and increase notifications for watched bookings
+- **Trip countdowns** — Reminders at T-7, T-3, and T-1 days before trip start
+- **Abandoned plan follow-up** — Re-engages users after 48+ hours of silence on an active plan
+- **Opt-out** — Every notification includes "Reply STOP to turn off alerts"
+
+### Web Companion
+- **Itinerary page** — Mobile-optimized HTML page with day-by-day timeline, booking CTAs, budget breakdown, and map links (`GET /trip/:tripId`)
+- **Travel DNA profile** — Shows all learned preferences grouped by category with confidence badges (`GET /profile/:userId`)
+- **Comparison page** — Side-by-side hotel/flight comparison with recommended badge and booking buttons (`GET /compare/:comparisonId`)
+- **Secure links** — Short-lived, unguessable tokens stored in Redis
+
+### Resilience
+- **Retry with backoff** — All external API calls (Claude, Duffel, Google, Brave, Twilio) wrapped with exponential backoff retry
+- **Circuit breaker** — 3 failures in 5 minutes trips the circuit, blocking requests for 2 minutes to prevent cascading failures
+- **Dead letter queue** — Permanently failed conversation jobs send an apology message to the user
+- **Graceful degradation** — Search failures return helpful messages instead of errors; Claude handles missing data naturally
+- **Unsupported media handling** — Audio/video messages get a friendly "type that out for me" response
+
+### Other
 - **Intent classification** — Layered system: fast regex for trivial intents, Haiku for complex classification, Redis-cached results
 - **Itinerary modification** — Natural language plan edits ("swap day 3 dinner for sushi")
-- **PDF itineraries** — Generates formatted PDFs with booking references and QR codes
+- **PDF itineraries** — Generates formatted PDFs with booking references
 - **Event discovery** — Ticketmaster integration for finding concerts, festivals, and events during travel dates
-- **Price monitoring** — Scheduled price-drop detection with proactive WhatsApp notifications
-- **Live booking view** — Real-time browser session embedding so users can watch and intervene during automated bookings
+- **Structured logging** — Per-turn logging of intent, tools called, token usage, onboarding state, and response time
 
 ---
 
@@ -58,8 +109,8 @@ Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, B
               ┌─────────────┼─────────────┐
               ▼             ▼             ▼
         ┌──────────┐ ┌──────────┐ ┌──────────────┐
-        │  Claude  │ │  Duffel  │ │ Browserbase  │
-        │ (AI/LLM) │ │ (Flights)│ │ (Automation) │
+        │  Claude  │ │  Duffel  │ │    Stripe    │
+        │ (AI/LLM) │ │ (Flights)│ │  (Payments)  │
         └──────────┘ └──────────┘ └──────────────┘
 ```
 
@@ -69,10 +120,9 @@ Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, B
 | HTTP Server | Fastify 5 |
 | Database | PostgreSQL 16 + pgvector (via Drizzle ORM) |
 | Queue / Cache | Redis + BullMQ + ioredis |
-| AI | Anthropic Claude (Sonnet for conversation, Haiku for classification) |
+| AI | Anthropic Claude (Sonnet for conversation, Haiku for background tasks) |
 | Embeddings | Voyage AI (`voyage-large-2`, 1536-d vectors) |
 | WhatsApp | Twilio Business API + Content API (interactive messages) |
-| Browser Automation | Browserbase (cloud browsers) + Stagehand (AI agent framework) |
 | Flights | Duffel API |
 | Payments | Stripe Checkout Sessions |
 | Object Storage | Cloudflare R2 (S3-compatible) |
@@ -87,12 +137,16 @@ Built with Claude (Anthropic), Fastify, PostgreSQL + pgvector, BullMQ, Twilio, B
 src/
 ├── ai/                          # LLM layer
 │   ├── client.ts                # Anthropic SDK singleton
-│   ├── tools.ts                 # Tool definitions exposed to Claude
+│   ├── tools.ts                 # 15 tool definitions exposed to Claude
 │   └── prompts/                 # System, planning, booking, extraction prompts
+│       ├── system.ts            # Main system prompt with confidence-weighted profiles
+│       ├── extraction.ts        # Preference extraction with contradiction detection
+│       ├── planning.ts          # Trip planning prompt
+│       └── booking.ts           # Booking flow prompt
 │
 ├── config/
 │   ├── env.ts                   # Zod-validated environment variables
-│   └── constants.ts             # Limits, model IDs, FSM states, queue config
+│   └── constants.ts             # Context tiers, models, FSM states, queue config
 │
 ├── db/
 │   ├── schema.ts                # Drizzle table definitions
@@ -100,8 +154,8 @@ src/
 │   └── migrate.ts               # Startup migration runner
 │
 ├── jobs/
-│   ├── queue.ts                 # BullMQ queue definitions + workers
-│   ├── scheduler.ts             # Cron jobs (price checks, memory decay)
+│   ├── queue.ts                 # BullMQ queue definitions + workers + dead letter handling
+│   ├── scheduler.ts             # Cron jobs (price checks, memory decay, notifications)
 │   └── workers/                 # Job processors (planning, booking, memory, pricing)
 │
 ├── routes/
@@ -109,14 +163,15 @@ src/
 │   ├── whatsapp.ts              # POST /webhook/whatsapp (Twilio)
 │   ├── booking.ts               # Booking session management
 │   ├── payments.ts              # POST /webhook/stripe + success/cancel pages
+│   ├── web.ts                   # Web companion pages (itinerary, profile, comparison)
 │   └── dev.ts                   # Dev-only chat endpoint (non-production)
 │
 ├── services/
 │   ├── conversation/            # Core conversation engine
-│   │   ├── engine.ts            # Message processing + Claude tool loop
+│   │   ├── engine.ts            # Three-tier context + Claude tool loop + onboarding detection
+│   │   ├── context.ts           # Three-tier context windowing + trip state injection
 │   │   ├── state-machine.ts     # Conversation FSM
-│   │   ├── tool-executor.ts     # Routes Claude tool calls to implementations
-│   │   ├── context.ts           # Conversation history assembly
+│   │   ├── tool-executor.ts     # Routes Claude tool calls with retry/fallback
 │   │   ├── intent.ts            # Intent classification (regex + Haiku)
 │   │   └── clarifier.ts         # Missing-info detection for planning
 │   │
@@ -124,29 +179,25 @@ src/
 │   │   ├── orchestrator.ts      # Browser session setup + execution
 │   │   ├── session.ts           # Session lifecycle management
 │   │   ├── search-cache.ts      # Redis-backed search result cache
-│   │   └── providers/           # Site-specific automation
-│   │       ├── base.ts          # Abstract provider with screenshot/CAPTCHA support
-│   │       ├── provider-selector.ts  # Smart routing (loyalty, API availability)
-│   │       ├── marriott.ts      # Marriott browser automation
-│   │       ├── booking-com.ts   # Booking.com browser automation
-│   │       ├── airbnb.ts        # Airbnb browser automation
-│   │       ├── opentable.ts     # OpenTable browser automation
-│   │       ├── viator.ts        # Viator browser automation
-│   │       └── flights/
-│   │           └── duffel.ts    # Duffel flight API provider
+│   │   └── providers/           # Site-specific automation + Duffel flights
 │   │
 │   ├── planning/                # Trip planning
 │   │   ├── planner.ts           # Plan generation orchestration
+│   │   ├── validator.ts         # Post-generation validation (logistics, budget, pace, venues)
 │   │   ├── modifier.ts          # AI-powered plan modifications
 │   │   ├── research.ts          # Destination research (Brave Search)
 │   │   ├── pdf.ts               # PDF itinerary generation
 │   │   └── pricing.ts           # Price comparison + drop detection
 │   │
 │   ├── memory/                  # User preference memory
-│   │   ├── store.ts             # Preference persistence + confidence decay
-│   │   ├── recall.ts            # Semantic memory retrieval
+│   │   ├── store.ts             # Preference CRUD with contradiction detection + confidence scoring
+│   │   ├── recall.ts            # Semantic memory retrieval + reranking
 │   │   ├── embeddings.ts        # Voyage AI vector embeddings
-│   │   └── extractor.ts         # Extract preferences from conversation
+│   │   ├── extractor.ts         # Extract preferences + detect contradictions from conversation
+│   │   └── profile.ts           # Build complete user profile
+│   │
+│   ├── notifications/           # Proactive outbound messaging
+│   │   └── service.ts           # Price alerts, trip countdowns, abandoned plan follow-ups
 │   │
 │   ├── payments/                # Stripe integration
 │   │   ├── stripe.ts            # Checkout session creation
@@ -165,8 +216,8 @@ src/
 │   │   └── events.ts            # Ticketmaster + Brave fallback
 │   │
 │   ├── whatsapp/                # WhatsApp messaging
-│   │   ├── handler.ts           # Incoming message processing
-│   │   ├── sender.ts            # Twilio message sending
+│   │   ├── handler.ts           # Incoming message processing + unsupported media handling
+│   │   ├── sender.ts            # Twilio message sending with retry
 │   │   ├── templates.ts         # Interactive message templates
 │   │   └── formatter.ts         # Message formatting for WhatsApp limits
 │   │
@@ -175,9 +226,23 @@ src/
 │   │
 │   └── rate-limiter.ts          # Rate limiting for Claude + browser sessions
 │
+├── templates/                   # Server-rendered HTML pages
+│   ├── itinerary.ts             # Mobile-optimized trip itinerary page
+│   ├── profile.ts               # Travel DNA profile page
+│   ├── comparison.ts            # Side-by-side option comparison page
+│   └── live-view.html           # Live booking view (browser automation)
+│
 ├── types/                       # Shared TypeScript types
-├── utils/                       # Logger, correlation IDs, Redis, helpers
-├── templates/                   # HTML templates (live booking view)
+├── utils/
+│   ├── errors.ts                # Retry wrapper, circuit breaker, error categories
+│   ├── deeplink.ts              # Deep link generators (12 providers)
+│   ├── logger.ts                # Pino structured logging with PII redaction
+│   ├── redis.ts                 # Shared Redis client
+│   ├── correlation.ts           # Request correlation IDs
+│   ├── phone.ts                 # Phone number formatting
+│   ├── date.ts                  # Date utilities
+│   └── currency.ts              # Currency formatting
+│
 └── index.ts                     # Application entry point
 
 drizzle/                         # SQL migration files
@@ -249,7 +314,7 @@ Copy `.env.example` to `.env` and fill in your keys. Here's what each one does:
 
 | Variable | Description | Required? |
 |----------|-------------|-----------|
-| `GOOGLE_MAPS_API_KEY` | Google Maps Platform (Places, Directions) | Recommended |
+| `GOOGLE_MAPS_API_KEY` | Google Maps Platform (Places, Directions, venue verification) | Recommended |
 | `DUFFEL_API_KEY` | Duffel flight search & booking | Recommended |
 | `BRAVE_SEARCH_API_KEY` | Brave Search (web search, weather fallback, research) | Recommended |
 | `VOYAGE_API_KEY` | Voyage AI embeddings for semantic memory | Optional |
@@ -267,6 +332,7 @@ Copy `.env.example` to `.env` and fill in your keys. Here's what each one does:
 
 | Variable | Description | Required? |
 |----------|-------------|-----------|
+| `ENABLE_BROWSER_AUTOMATION` | Set `true` to enable browser booking (default: `false`) | Optional |
 | `BROWSERBASE_API_KEY` | Browserbase API key for cloud browsers | Optional |
 | `BROWSERBASE_PROJECT_ID` | Browserbase project ID | With Browserbase |
 
@@ -286,7 +352,7 @@ Copy `.env.example` to `.env` and fill in your keys. Here's what each one does:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PORT` | Server port | `3000` |
-| `APP_URL` | Public URL (used for Stripe redirects, live view links) | `http://localhost:3000` |
+| `APP_URL` | Public URL (used for web pages, Stripe redirects) | `http://localhost:3000` |
 | `HEALTH_CHECK_API_KEY` | Protects `/health/detailed` endpoint | None |
 | `LOG_LEVEL` | Pino log level | `info` |
 
@@ -298,12 +364,12 @@ The application uses PostgreSQL with the `pgvector` extension for semantic memor
 
 **Tables:**
 - `users` — Phone number, name, active/opt-out status
-- `user_preferences` — Key/value preferences with confidence scores and decay
+- `user_preferences` — Key/value preferences with confidence scores, contradiction tracking, and decay
 - `user_memory_embeddings` — 1536-dimensional vector embeddings for semantic recall
 - `trips` — Destinations, dates, JSON itinerary plans, budget
-- `conversations` — Conversation state and context
+- `conversations` — Conversation state, context, and cached conversation summaries
 - `messages` — Full message history including tool calls/results
-- `bookings` — Booking records with provider, status, Stripe session, payment status
+- `bookings` — Booking records with provider, status (planned/link_sent/user_confirmed/booked), Stripe session, payment status
 - `automation_scripts` — Browser automation step tracking and success rates
 
 ---
@@ -351,6 +417,9 @@ The build runs `tsc` and copies templates/migrations. The start command runs `no
 | `POST` | `/booking/start` | Start a browser booking session |
 | `GET` | `/booking/live/:sessionId` | Live booking view (embedded browser) |
 | `POST` | `/booking/live/:sessionId/cancel` | Cancel a booking session |
+| `GET` | `/trip/:tripId` | Web companion: full trip itinerary page |
+| `GET` | `/profile/:userId` | Web companion: Travel DNA profile page |
+| `GET` | `/compare/:comparisonId` | Web companion: side-by-side comparison page |
 | `POST` | `/dev/chat` | Dev-only: test conversation without WhatsApp |
 | `GET` | `/dev/conversations/:userId` | Dev-only: view conversation history |
 
@@ -364,10 +433,13 @@ The build runs `tsc` and copies templates/migrations. The start command runs `no
 2. Twilio webhook hits `/webhook/whatsapp`
 3. Message is queued via BullMQ for async processing
 4. Intent classifier determines the user's goal (regex fast-path → Haiku LLM)
-5. Conversation engine sends the message to Claude with tools and conversation history
-6. Claude may call tools (search flights, check weather, create trip plan, book flight, etc.)
-7. Tool results are fed back to Claude in a loop (up to 15 iterations)
-8. Final response is sent back via WhatsApp (with interactive buttons when appropriate)
+5. Three-tier context window is assembled: recent messages verbatim, mid-range condensed, old messages summarized
+6. Active trip state is injected at the END of context to prevent drift
+7. Claude receives the message with all 15 tools and the user's confidence-weighted profile
+8. Claude may call tools (search flights, check weather, create trip plan, book flight, etc.)
+9. Tool results are fed back to Claude in a loop (up to 10 iterations)
+10. Final response is sent back via WhatsApp (with interactive buttons when appropriate)
+11. Preferences are extracted asynchronously via Haiku and stored with confidence scores
 
 ### Booking Flow (Flights)
 
@@ -381,18 +453,99 @@ The build runs `tsc` and copies templates/migrations. The start command runs `no
 ### Booking Flow (Hotels/Restaurants/Experiences)
 
 1. Claude calls `initiate_booking` with venue details
-2. A Browserbase cloud browser session is created
-3. Stagehand navigates the booking site (Booking.com, OpenTable, Viator, etc.)
-4. User gets a live view link to watch/intervene
-5. User logs into their own account and completes payment
-6. Screenshots are captured at each step and uploaded to R2
+2. System generates pre-filled deep links for multiple providers (Marriott, Booking.com, OpenTable, etc.)
+3. Links are sent to the user via WhatsApp with provider labels
+4. Booking is tracked as `link_sent` in the database
+5. When user confirms they booked, Claude calls `confirm_booking` to update the record
+6. Browser automation path available behind `ENABLE_BROWSER_AUTOMATION=true` flag
 
 ### Memory System
 
-- Preferences are extracted from every conversation by Claude (Haiku)
-- Stored with confidence scores that decay over time
-- Semantic embeddings enable recall of relevant memories based on context
-- Preferences are injected into the system prompt for personalized responses
+- Preferences are extracted from every conversation by Claude Haiku (background task)
+- Stored with confidence scores: explicit = 0.7, inferred = 0.4, with bumps for confirmation
+- Contradictions detected and flagged — agent asks naturally instead of silently overwriting
+- Confidence decays by 0.1 for preferences not referenced in 6+ months
+- Semantic embeddings enable recall of relevant memories with similarity + recency + confidence reranking
+- Profile injected into system prompt with confidence-weighted language
+
+### Proactive Notifications
+
+- Price monitoring runs every 6 hours for active bookings
+- Trip countdown reminders sent at T-7, T-3, and T-1 days
+- Abandoned plan follow-ups sent after 48+ hours of silence
+- All notifications include opt-out footer
+
+### Plan Validation
+
+After generating an itinerary, the validator checks:
+- **Logistics**: travel time between consecutive activities, scheduling overlaps
+- **Budget**: total costs vs. stated budget (flags >15% overage)
+- **Pace**: activity count vs. user preference (packed/balanced/relaxed)
+- **Venues**: Google Places API verification for named restaurants/hotels/experiences
+- Auto-fixable issues (time overlaps) are corrected automatically; others are flagged for Claude
+
+---
+
+## Testing
+
+### Automated Tests
+
+```bash
+# Run all tests
+npm test
+
+# Run specific test suites
+npx vitest run src/__tests__/deep-links.test.ts
+npx vitest run src/__tests__/state-machine.test.ts
+npx vitest run src/__tests__/unit/search-cache.test.ts
+```
+
+### Manual Testing via Dev Endpoint
+
+The `/dev/chat` endpoint lets you test the full conversation loop without WhatsApp:
+
+```bash
+# Start a conversation
+curl -X POST http://localhost:3000/dev/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "Plan a trip to Tokyo in October for 2 people"}'
+
+# Continue with the same user (default phone: +15550001234)
+curl -X POST http://localhost:3000/dev/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "Budget is around $4000, we love food and history"}'
+
+# Test with a different user
+curl -X POST http://localhost:3000/dev/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"phone": "+15550009999", "message": "Hi there!"}'
+```
+
+### Web Companion Pages
+
+After creating a trip, test the web pages:
+
+```bash
+# Get a trip ID from the database
+psql $DATABASE_URL -c "SELECT id, destination FROM trips ORDER BY created_at DESC LIMIT 1;"
+
+# View in browser
+open "http://localhost:3000/trip/<TRIP_ID>"
+open "http://localhost:3000/profile/<USER_ID>"
+```
+
+### Database Verification
+
+```bash
+# Check preference confidence scoring
+psql $DATABASE_URL -c "SELECT category, key, value, confidence, source FROM user_preferences ORDER BY created_at DESC LIMIT 10;"
+
+# Check booking tracking
+psql $DATABASE_URL -c "SELECT type, provider, status, booking_reference FROM bookings ORDER BY created_at DESC LIMIT 5;"
+
+# Check conversation summaries
+psql $DATABASE_URL -c "SELECT id, context->>'conversationSummary' as summary FROM conversations WHERE context->>'conversationSummary' IS NOT NULL LIMIT 3;"
+```
 
 ---
 
@@ -406,7 +559,6 @@ The build runs `tsc` and copies templates/migrations. The start command runs `no
 | [Google Maps Platform](https://console.cloud.google.com) | $200/month free | Recommended |
 | [Brave Search](https://brave.com/search/api/) | 2,000 queries/month free | Recommended |
 | [Stripe](https://dashboard.stripe.com) | No monthly fee (2.9% + 30¢ per transaction) | Optional |
-| [Browserbase](https://browserbase.com) | Free tier available | Optional |
 | [Cloudflare R2](https://dash.cloudflare.com) | 10GB free, zero egress | Optional |
 | [Voyage AI](https://dash.voyageai.com) | Free tier available | Optional |
 | [Ticketmaster](https://developer-acct.ticketmaster.com) | 5,000 requests/day free | Optional |
@@ -427,10 +579,10 @@ Contributions are welcome! Here's how to get started:
 ### Areas Where Help Is Needed
 
 - **Testing** — Integration and unit test coverage (see `src/__tests__/`)
-- **Browser providers** — New booking site automations (follow `src/services/booking/providers/base.ts` pattern)
-- **Observability** — Prometheus metrics, Sentry integration, structured error tracking
+- **WhatsApp templates** — Twilio Content API template registration for interactive buttons/lists
 - **Multi-currency** — Currency conversion and display for international users
 - **Localization** — Multi-language support for WhatsApp messages
+- **Observability** — Prometheus metrics, Sentry integration
 
 ### Development Tips
 
@@ -438,7 +590,7 @@ Contributions are welcome! Here's how to get started:
 - Use `/dev/chat` endpoint to test without WhatsApp (non-production only)
 - Use `npm run db:studio` to inspect the database visually
 - Duffel test keys only work with "Duffel Airways" (fictional airline) — real airline bookings require a live key
-- Browser automation requires a Browserbase account — without it, the system returns deep links for manual booking
+- Browser automation is behind `ENABLE_BROWSER_AUTOMATION=true` — without it, the system uses deep links
 
 ---
 
