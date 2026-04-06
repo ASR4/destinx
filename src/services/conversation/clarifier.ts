@@ -23,36 +23,24 @@ interface TripPlanInput {
  * clarification object so the tool handler can return early with a question.
  */
 export function checkTripPlanInput(input: TripPlanInput): ClarificationNeeded | null {
-  const missing: string[] = [];
-  const questions: string[] = [];
-
+  // Only block if we truly have no destination — dates can be inferred by Claude
   if (!input.destination || String(input.destination).trim().length < 2) {
-    missing.push('destination');
-    questions.push('Where would you like to go?');
+    return { missing: ['destination'], question: 'Where would you like to go?' };
   }
 
-  if (!input.start_date || !isValidDate(input.start_date)) {
-    missing.push('start_date');
-    questions.push('When are you planning to travel?');
-  }
-
-  if (!input.end_date || !isValidDate(input.end_date)) {
-    missing.push('end_date');
-    questions.push('When do you return? (or how many nights?)');
-  }
-
+  // Sanity check: if both dates are provided and end is before start, flag it
   if (
     input.start_date && input.end_date &&
     isValidDate(input.start_date) && isValidDate(input.end_date) &&
     new Date(input.end_date) < new Date(input.start_date)
   ) {
-    missing.push('date_order');
-    questions.push('Your return date appears to be before your departure — could you double-check?');
+    return {
+      missing: ['date_order'],
+      question: 'Your return date appears to be before your departure — could you double-check?',
+    };
   }
 
-  if (missing.length === 0) return null;
-
-  return { missing, question: buildSimpleQuestion(missing, questions, input) };
+  return null;
 }
 
 function isValidDate(s: string): boolean {
