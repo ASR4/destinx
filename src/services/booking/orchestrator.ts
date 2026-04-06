@@ -77,7 +77,7 @@ export async function executeBookingSession(
       apiKey: process.env.BROWSERBASE_API_KEY,
       projectId: process.env.BROWSERBASE_PROJECT_ID,
       model: {
-        modelName: 'gpt-4o-mini' as const,
+        modelName: 'openai/gpt-4o-mini' as const,
         apiKey: modelApiKey,
       },
       verbose: 0,
@@ -210,7 +210,7 @@ async function captureFailureScreenshot(sessionId: string): Promise<string | nul
       browserbaseSessionID: sessionId,
       apiKey: process.env.BROWSERBASE_API_KEY,
       projectId: process.env.BROWSERBASE_PROJECT_ID,
-      model: { modelName: 'gpt-4o-mini' as const, apiKey: modelApiKey },
+      model: { modelName: 'openai/gpt-4o-mini' as const, apiKey: modelApiKey },
       verbose: 0,
     } as ConstructorParameters<typeof Stagehand>[0]);
     await stagehand.init();
