@@ -6,8 +6,12 @@ Items tracked during development and testing. Check off as completed.
 
 ## Production Readiness
 
-- [ ] **Browserbase Enterprise — enable `advancedStealth`**
-  Re-enable `advancedStealth: true` in `src/services/booking/session.ts` when on Browserbase Enterprise plan. Currently disabled because it requires Enterprise.
+- [ ] **Enable browser automation (ENABLE_BROWSER_AUTOMATION=true)**
+  Browser automation is behind a feature flag. To enable:
+  1. Upgrade to Browserbase Enterprise (for `advancedStealth` — required to bypass bot detection on Booking.com, OpenTable, Airbnb)
+  2. Set `ENABLE_BROWSER_AUTOMATION=true` in Railway env vars
+  3. Re-enable `advancedStealth: true` in `src/services/booking/session.ts`
+  Currently defaults to deep link mode — the agent sends direct booking links instead.
 
 - [ ] **Browserbase Enterprise — embeddable Live View (Option C)**
   Enterprise plan includes an embeddable live view URL for end users to watch the booking in real time (no auth needed). Replace the current screenshot-based progress updates with the live view embed once on Enterprise.

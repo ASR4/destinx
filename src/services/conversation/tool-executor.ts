@@ -421,19 +421,54 @@ const TOOL_HANDLERS: Record<
         error: 'Do not use initiate_booking for flights. Use the book_flight tool instead — flights are booked directly via the Duffel API.',
       };
     }
-    if (!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID) {
-      logger.warn(
-        {
-          userId: ctx.userId,
-          hasApiKey: Boolean(process.env.BROWSERBASE_API_KEY),
-          hasProjectId: Boolean(process.env.BROWSERBASE_PROJECT_ID),
-        },
-        'initiate_booking aborted — Browserbase env not fully configured',
-      );
+
+    const bookingDetails = mapBookingDetails(input.booking_type as string, details, ctx.userPhone);
+    const browserEnabled = process.env.ENABLE_BROWSER_AUTOMATION === 'true';
+
+    // When browser automation is disabled (default), go straight to deep links
+    if (!browserEnabled) {
+      logger.info({ userId: ctx.userId, bookingType: bookingDetails.type }, 'Browser automation disabled — sending deep links');
+      const { buildHotelDeepLinks, buildRestaurantDeepLinks, buildExperienceDeepLinks } = await import('../../utils/deeplink.js');
+      const { sendText } = await import('../whatsapp/sender.js');
+      const { toWhatsAppAddress } = await import('../../utils/phone.js');
+
+      let deepLinks: Record<string, string | null | undefined> = {};
+      if (bookingDetails.type === 'hotel') deepLinks = buildHotelDeepLinks(bookingDetails) as Record<string, string | null | undefined>;
+      else if (bookingDetails.type === 'restaurant') deepLinks = buildRestaurantDeepLinks(bookingDetails) as Record<string, string | null | undefined>;
+      else if (bookingDetails.type === 'experience') deepLinks = buildExperienceDeepLinks(bookingDetails) as Record<string, string | null | undefined>;
+
+      const links = Object.entries(deepLinks).filter(([, url]) => url);
+      if (links.length > 0) {
+        const LABELS: Record<string, string> = {
+          direct: '🏨 Direct site (best rates + perks)',
+          bookingCom: '🅱️ Booking.com',
+          openTable: '🍽️ OpenTable',
+          getYourGuide: '🎭 GetYourGuide',
+          viator: '🎭 Viator',
+          googleMaps: '📍 Google Maps',
+        };
+        const lines = ['🔗 Here are your best options to book:', ''];
+        links.forEach(([key, url], idx) => {
+          const label = LABELS[key] ?? key;
+          lines.push(`Option ${idx + 1}: ${label}`);
+          lines.push(`👉 ${url}`);
+          lines.push('');
+        });
+        if (bookingDetails.type === 'hotel') lines.push('💡 The direct hotel site usually has the best rates + loyalty perks!');
+        await sendText(toWhatsAppAddress(ctx.userPhone), lines.join('\n'));
+      }
+
       return {
-        error:
-          'Browser-based booking is not configured (need BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID). Give the user direct booking links.',
+        status: 'deep_links_sent',
+        message: 'I sent the user direct booking links via WhatsApp. Do NOT send additional links — just confirm you sent them and offer to help with anything else.',
       };
+    }
+
+    // --- Browser automation path (behind ENABLE_BROWSER_AUTOMATION=true flag) ---
+
+    if (!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID) {
+      logger.warn({ userId: ctx.userId }, 'initiate_booking aborted — Browserbase env not fully configured');
+      return { error: 'Browser-based booking is not configured. Give the user direct booking links.' };
     }
 
     const [userLimit, systemSlot] = await Promise.all([
@@ -451,8 +486,6 @@ const TOOL_HANDLERS: Record<
       return { error: RATE_LIMIT_MESSAGES.system };
     }
 
-    const bookingDetails = mapBookingDetails(input.booking_type as string, details, ctx.userPhone);
-
     logger.info(
       { userId: ctx.userId, bookingType: bookingDetails.type },
       'initiate_booking creating Browserbase session',
@@ -464,16 +497,11 @@ const TOOL_HANDLERS: Record<
       bookingDetails,
     );
 
-    // Session creation failed (deep-link fallback already sent to user)
     if (!sessionId) {
       await releaseSystemBrowserSlot();
-      logger.error(
-        { userId: ctx.userId, bookingType: bookingDetails.type },
-        'initiate_booking session creation failed — deep-link fallback already sent to user',
-      );
       return {
         status: 'fallback_sent',
-        message: 'I already sent the user direct booking links via WhatsApp. Do NOT send additional links or booking instructions — just let them know you sent the links and offer to help with anything else.',
+        message: 'I already sent the user direct booking links via WhatsApp. Do NOT send additional links — just confirm and offer to help with anything else.',
       };
     }
 
@@ -485,13 +513,8 @@ const TOOL_HANDLERS: Record<
     });
 
     logger.info(
-      {
-        userId: ctx.userId,
-        sessionId,
-        jobId: job.id,
-        bookingType: bookingDetails.type,
-      },
-      'initiate_booking Browserbase session ready — booking job enqueued for Stagehand automation',
+      { userId: ctx.userId, sessionId, jobId: job.id, bookingType: bookingDetails.type },
+      'initiate_booking Browserbase session ready — booking job enqueued',
     );
 
     return {

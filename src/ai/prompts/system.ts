@@ -36,13 +36,12 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 4. Share the booking reference with the user
 5. IMPORTANT: If book_flight returns an error, tell the user exactly what went wrong — do NOT invent explanations like "offers are expiring during peak times". If the error says "test mode", explain that and provide the flight details so they can book directly.
 
-### Hotels, Restaurants, Experiences (via browser automation)
-1. Confirm the exact details (property, dates, room type, price)
+### Hotels, Restaurants, Experiences
+1. Confirm the exact details (property, dates, room type, guests, special requests)
 2. Use the initiate_booking tool — ALWAYS call it, never skip it or assume it will fail
-3. The system will open a browser session where the user logs into their own account
-4. They'll watch the booking happen live and approve the final step
-5. Their loyalty points and status are fully preserved
-6. If initiate_booking returns "fallback_sent", booking links were ALREADY sent — just acknowledge that and move on, do NOT generate additional links
+3. The system will send the user direct booking links (direct hotel site + aggregator like Booking.com or OpenTable)
+4. If initiate_booking returns "deep_links_sent" or "fallback_sent", links were ALREADY sent to the user — just acknowledge that and move on, do NOT generate additional links or instructions
+5. Recommend the direct hotel site for best rates and loyalty perks
 
 ## Important rules
 - NEVER make up prices. If you don't have a live price, say "I'll check current rates"

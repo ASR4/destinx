@@ -17,7 +17,8 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_WHATSAPP_NUMBER: z.string().default('+14155238886'),
 
-  // Browser automation — optional
+  // Browser automation — optional, disabled by default
+  ENABLE_BROWSER_AUTOMATION: z.string().default('false'),
   BROWSERBASE_API_KEY: z.string().optional(),
   BROWSERBASE_PROJECT_ID: z.string().optional(),
 
