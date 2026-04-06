@@ -86,18 +86,34 @@ export function getConversationEvents(): QueueEvents {
 
 /**
  * Attach standard error + failed event handlers to a worker.
- * Logs all failures; on final failure (no more retries) logs at error level.
+ * On permanent failure: logs to DLQ, sends apology message if applicable.
  */
 function attachWorkerEvents(worker: Worker, name: string): void {
-  worker.on('failed', (job, err) => {
+  worker.on('failed', async (job, err) => {
     const attemptsMade = job?.attemptsMade ?? 0;
     const maxAttempts = job?.opts?.attempts ?? retryOptions.attempts;
     const errMsg = err instanceof Error ? err.message : String(err);
     if (attemptsMade >= maxAttempts) {
       logger.error(
-        { jobId: job?.id, jobName: job?.name, attemptsMade, error: errMsg },
+        { jobId: job?.id, jobName: job?.name, attemptsMade, error: errMsg, data: job?.data },
         `[DLQ] ${name} job permanently failed after ${attemptsMade} attempts: ${errMsg}`,
       );
+
+      // Dead letter handler: send apology if the user hasn't heard back
+      if (name === 'conversation' && job?.data) {
+        const data = job.data as { userPhone?: string };
+        if (data.userPhone) {
+          try {
+            const { sendText } = await import('../services/whatsapp/sender.js');
+            await sendText(
+              data.userPhone,
+              "I'm sorry, I had trouble processing that. Could you try again? 🙏",
+            );
+          } catch {
+            // Last resort: can't even send apology
+          }
+        }
+      }
     } else {
       logger.warn(
         { jobId: job?.id, jobName: job?.name, attemptsMade, maxAttempts, error: errMsg },
@@ -191,6 +207,12 @@ export function startWorkers(): void {
       } else if (job.name === 'post-trip-check') {
         const { runPostTripCheck } = await import('./scheduler.js');
         await runPostTripCheck();
+      } else if (job.name === 'abandoned-plan-check') {
+        const { runAbandonedPlanCheck } = await import('./scheduler.js');
+        await runAbandonedPlanCheck();
+      } else if (job.name === 'trip-countdown') {
+        const { runTripCountdown } = await import('./scheduler.js');
+        await runTripCountdown();
       } else {
         const { processMemoryExtraction } = await import('./workers/memory-extract.js');
         await processMemoryExtraction(job.data);

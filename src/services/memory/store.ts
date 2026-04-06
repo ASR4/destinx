@@ -10,20 +10,101 @@ import type {
 } from '../../types/memory.js';
 
 /**
+ * Confidence scoring rules (Upgrade 5a):
+ *
+ * | Signal                                  | Confidence  |
+ * |-----------------------------------------|-------------|
+ * | User explicitly states preference       | 0.7         |
+ * | Agent infers from behavior/context      | 0.4         |
+ * | User confirms an inferred preference    | +0.2 (cap 0.95) |
+ * | User acts consistently with preference  | +0.1 (cap 0.95) |
+ * | User contradicts a stored preference    | Reset to 0.3, set needs_clarification |
+ * | Not referenced in 6+ months             | Decay by 0.1 |
+ */
+const CONFIDENCE = {
+  EXPLICIT: 0.7,
+  INFERRED: 0.4,
+  CONFIRMATION_BUMP: 0.2,
+  CONSISTENCY_BUMP: 0.1,
+  CONTRADICTION_RESET: 0.3,
+  CAP: 0.95,
+} as const;
+
+/**
+ * Check if a new preference contradicts an existing one.
+ * Returns the existing preference if contradiction detected, null otherwise.
+ */
+export async function detectContradiction(
+  userId: string,
+  category: PreferenceCategory,
+  key: string,
+  newValue: unknown,
+): Promise<Preference | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(userPreferences)
+    .where(
+      and(
+        eq(userPreferences.userId, userId),
+        eq(userPreferences.category, category),
+        eq(userPreferences.key, key),
+      ),
+    )
+    .limit(1);
+
+  if (rows.length === 0) return null;
+
+  const existing = rows[0]!;
+  const existingVal = typeof existing.value === 'string' ? existing.value : JSON.stringify(existing.value);
+  const newVal = typeof newValue === 'string' ? newValue : JSON.stringify(newValue);
+
+  if (existingVal.toLowerCase() === newVal.toLowerCase()) return null;
+  if ((existing.confidence ?? 0.5) < 0.3) return null;
+
+  return {
+    id: existing.id,
+    userId: existing.userId,
+    category: existing.category as PreferenceCategory,
+    key: existing.key,
+    value: existing.value,
+    confidence: existing.confidence ?? 0.5,
+    source: existing.source as Preference['source'],
+    lastConfirmedAt: existing.lastConfirmedAt ?? undefined,
+    createdAt: existing.createdAt ?? new Date(),
+    updatedAt: existing.updatedAt ?? new Date(),
+  };
+}
+
+/**
  * Upsert a user preference using ON CONFLICT DO UPDATE.
- * If a preference with the same (userId, category, key) already exists,
- * updates it rather than creating a duplicate — resolving conflicts
- * by taking the higher confidence value.
+ * Handles contradiction detection and confidence scoring.
  */
 export async function upsertPreference(
   userId: string,
   pref: ExtractedPreference,
-): Promise<void> {
+): Promise<{ contradiction?: Preference }> {
   const db = getDb();
 
-  const confidence = pref.source === 'explicit'
-    ? Math.max(0.8, pref.confidence)
-    : pref.confidence;
+  // Check for contradiction before upserting
+  const contradiction = await detectContradiction(userId, pref.category, pref.key, pref.value);
+
+  let confidence: number;
+  if (contradiction) {
+    confidence = CONFIDENCE.CONTRADICTION_RESET;
+    logger.info(
+      { userId, category: pref.category, key: pref.key, oldValue: contradiction.value, newValue: pref.value },
+      'Preference contradiction detected — resetting confidence',
+    );
+  } else if (pref.source === 'explicit') {
+    confidence = Math.max(CONFIDENCE.EXPLICIT, pref.confidence);
+  } else if (pref.source === 'feedback') {
+    confidence = Math.min(CONFIDENCE.CAP, pref.confidence + CONFIDENCE.CONFIRMATION_BUMP);
+  } else {
+    confidence = Math.max(CONFIDENCE.INFERRED, pref.confidence);
+  }
+
+  const metadata = contradiction ? { needs_clarification: true } : undefined;
 
   await db
     .insert(userPreferences)
@@ -40,7 +121,9 @@ export async function upsertPreference(
       target: [userPreferences.userId, userPreferences.category, userPreferences.key],
       set: {
         value: pref.value,
-        confidence: sql`GREATEST(${userPreferences.confidence}, ${confidence})`,
+        confidence: contradiction
+          ? sql`${CONFIDENCE.CONTRADICTION_RESET}`
+          : sql`LEAST(${CONFIDENCE.CAP}, GREATEST(${userPreferences.confidence}, ${confidence}))`,
         source: pref.source,
         updatedAt: new Date(),
         lastConfirmedAt: pref.source === 'explicit'
@@ -49,7 +132,8 @@ export async function upsertPreference(
       },
     });
 
-  logger.debug({ userId, category: pref.category, key: pref.key }, 'Preference upserted');
+  logger.debug({ userId, category: pref.category, key: pref.key, confidence }, 'Preference upserted');
+  return contradiction ? { contradiction } : {};
 }
 
 /**
@@ -65,7 +149,7 @@ export async function reaffirmPreference(
     .update(userPreferences)
     .set({
       lastConfirmedAt: new Date(),
-      confidence: sql`LEAST(1.0, ${userPreferences.confidence} + 0.1)`,
+      confidence: sql`LEAST(${CONFIDENCE.CAP}, ${userPreferences.confidence} + ${CONFIDENCE.CONSISTENCY_BUMP})`,
       updatedAt: new Date(),
     })
     .where(

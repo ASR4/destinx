@@ -7,7 +7,7 @@ import {
 } from '../utils/deeplink.js';
 
 describe('buildHotelDeepLinks', () => {
-  it('generates booking.com and agoda links', () => {
+  it('generates booking.com, marriott, hilton, hyatt, and airbnb links', () => {
     const links = buildHotelDeepLinks({
       destination: 'Tokyo',
       checkIn: '2026-05-01',
@@ -19,8 +19,10 @@ describe('buildHotelDeepLinks', () => {
     expect(links.bookingCom).toContain('booking.com');
     expect(links.bookingCom).toContain('checkin=2026-05-01');
     expect(links.bookingCom).toContain('checkout=2026-05-05');
-    expect(links.agoda).toContain('agoda.com');
-    expect(links.agoda).toContain('Tokyo');
+    expect(links.marriott).toContain('marriott.com');
+    expect(links.hilton).toContain('hilton.com');
+    expect(links.hyatt).toContain('hyatt.com');
+    expect(links.airbnb).toContain('airbnb.com');
   });
 
   it('includes property name in search when provided', () => {

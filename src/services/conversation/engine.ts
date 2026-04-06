@@ -4,7 +4,7 @@ import { getAnthropicClient } from '../../ai/client.js';
 import { getTravelAgentTools } from '../../ai/tools.js';
 import { buildSystemPrompt } from '../../ai/prompts/system.js';
 import { recallUserProfile, recallRelevantMemories } from '../memory/recall.js';
-import { getConversationHistory } from './context.js';
+import { buildContextWindow, buildTripStateBlock } from './context.js';
 import { classifyIntent } from './intent.js';
 import { getNextState, isConfirmationInState } from './state-machine.js';
 import { executeToolCalls, getHoldingMessage } from './tool-executor.js';
@@ -18,6 +18,7 @@ import {
 import { getDb } from '../../db/client.js';
 import { conversations, messages, trips } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
+import { withRetry, withCircuitBreaker, getUserMessage } from '../../utils/errors.js';
 import { AI, CONVERSATION } from '../../config/constants.js';
 import type { ConversationFSMState } from '../../config/constants.js';
 import type { Trip } from '../../types/trip.js';
@@ -36,9 +37,9 @@ export async function processMessage(
   userMessage: string,
   options: ProcessMessageOptions,
 ): Promise<string> {
+  const startTime = Date.now();
   logger.info({ userId, conversationId }, 'Processing message');
 
-  // Rate limiting — check before doing any expensive work
   const [claudeLimit, claudeSlot] = await Promise.all([
     checkUserClaudeLimit(userId),
     acquireSystemClaudeSlot(),
@@ -54,10 +55,13 @@ export async function processMessage(
   }
 
   try {
-    return await _processMessageInner(userId, conversationId, userMessage, options);
+    const result = await _processMessageInner(userId, conversationId, userMessage, options);
+    const elapsed = Date.now() - startTime;
+    logger.info({ userId, conversationId, responseTimeMs: elapsed }, 'Message processed');
+    return result;
   } catch (err) {
     logger.error({ err, userId, conversationId }, 'processMessage fatal error');
-    return "Sorry, I hit an unexpected error — please try again in a moment.";
+    return getUserMessage('unknown');
   } finally {
     await releaseSystemClaudeSlot();
   }
@@ -69,20 +73,31 @@ async function _processMessageInner(
   userMessage: string,
   options: ProcessMessageOptions,
 ): Promise<string> {
+  // Load profile, context, and active trip in parallel
   let userProfile: Awaited<ReturnType<typeof recallUserProfile>>;
-  let history: Awaited<ReturnType<typeof getConversationHistory>>;
+  let contextResult: Awaited<ReturnType<typeof buildContextWindow>>;
+  let activeTrip: Trip | null;
+
   try {
-    [userProfile, history] = await Promise.all([
+    [userProfile, contextResult, activeTrip] = await Promise.all([
       recallUserProfile(userId),
-      getConversationHistory(conversationId),
+      buildContextWindow(conversationId, null),
+      getActiveTrip(userId).catch((err) => {
+        logger.warn({ err }, 'Failed to load active trip');
+        return null;
+      }),
     ]);
   } catch (err) {
     logger.error({ err, userId }, 'Failed to load user context — using empty profile');
-    userProfile = { preferences: { accommodation: [], food: [], transport: [], budget: [], travel_style: [], loyalty: [], dietary: [], companion: [] }, lastTrips: [] };
-    history = [];
+    userProfile = {
+      preferences: { accommodation: [], food: [], transport: [], budget: [], travel_style: [], loyalty: [], dietary: [], companion: [] },
+      lastTrips: [],
+    };
+    contextResult = { messages: [], estimatedTokens: 0 };
+    activeTrip = null;
   }
 
-  // Attach semantic memories relevant to this message (best-effort — never blocks)
+  // Semantic memories (best-effort)
   try {
     const semanticMemories = await recallRelevantMemories(userId, userMessage);
     if (semanticMemories.length > 0) {
@@ -92,10 +107,8 @@ async function _processMessageInner(
     logger.debug({ err }, 'Semantic memory recall failed — skipping');
   }
 
-  const activeTrip = await getActiveTrip(userId).catch((err) => {
-    logger.warn({ err }, 'Failed to load active trip');
-    return null;
-  });
+  // Determine if user is in onboarding (Upgrade 7)
+  const isOnboarding = await checkIsOnboarding(userId, userProfile);
 
   const currentState = await getConversationState(conversationId);
 
@@ -107,26 +120,60 @@ async function _processMessageInner(
   const nextState = getNextState(currentState, intent.intent);
   await saveConversationState(conversationId, nextState);
 
-  const anthropic = getAnthropicClient();
+  // Build message list: tiered history + user message + trip state at END
   let claudeMessages: Anthropic.Messages.MessageParam[] = [
-    ...history,
+    ...contextResult.messages,
     { role: 'user' as const, content: userMessage },
   ];
+
+  // 1b: Append active trip state at the END of context (prevents "lost in the middle" drift)
+  if (activeTrip && activeTrip.plan?.days?.length > 0) {
+    const tripStateBlock = buildTripStateBlock(activeTrip);
+    const lastMsg = claudeMessages[claudeMessages.length - 1];
+    if (lastMsg && lastMsg.role === 'user') {
+      const existingContent = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+      claudeMessages[claudeMessages.length - 1] = {
+        role: 'user',
+        content: `${existingContent}\n\n${tripStateBlock}`,
+      };
+    }
+  }
 
   let finalText = '';
   const collectedText: string[] = [];
   let holdingMessagesSent = 0;
   const loopStartTime = Date.now();
   const SECOND_HOLDING_DELAY_MS = 20_000;
+  let toolsCalled: string[] = [];
+
+  // 1d: All tools always registered (getTravelAgentTools returns the full stable set)
+  const tools = getTravelAgentTools();
 
   for (let iteration = 0; iteration < CONVERSATION.MAX_TOOL_LOOP_ITERATIONS; iteration++) {
-    const response = await anthropic.messages.create({
-      model: AI.CONVERSATION_MODEL,
-      max_tokens: AI.MAX_CONVERSATION_TOKENS,
-      system: buildSystemPrompt(userProfile, activeTrip),
-      messages: claudeMessages,
-      tools: getTravelAgentTools(),
-    });
+    // Wrap Claude call with retry + circuit breaker (Upgrade 6)
+    const response = await withRetry(
+      () => withCircuitBreaker('anthropic', () => {
+        const anthropic = getAnthropicClient();
+        return anthropic.messages.create({
+          model: AI.CONVERSATION_MODEL,
+          max_tokens: AI.MAX_CONVERSATION_TOKENS,
+          system: buildSystemPrompt(userProfile, activeTrip, { isOnboarding }),
+          messages: claudeMessages,
+          tools,
+        });
+      }),
+      {
+        maxRetries: 1,
+        baseDelayMs: 3000,
+        onRetry: (attempt) => {
+          if (holdingMessagesSent === 0) {
+            options.onProgress?.(getUserMessage('claude_timeout'));
+            holdingMessagesSent = 1;
+          }
+          logger.warn({ attempt }, 'Retrying Claude API call');
+        },
+      },
+    );
 
     const toolUseBlocks = response.content.filter(
       (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
@@ -143,6 +190,7 @@ async function _processMessageInner(
     }
 
     if (iterText) collectedText.push(iterText);
+    toolsCalled.push(...toolUseBlocks.map((b) => b.name));
 
     const elapsed = Date.now() - loopStartTime;
     if (holdingMessagesSent === 0 && elapsed > CONVERSATION.HOLDING_MESSAGE_DELAY_MS) {
@@ -175,7 +223,7 @@ async function _processMessageInner(
       { role: 'user' as const, content: toolResultContent },
     ];
 
-    // Persist tool exchange so subsequent turns see searchIds, flight details, etc.
+    // Persist tool exchange
     const now = Date.now();
     getDb()
       .insert(messages)
@@ -208,6 +256,16 @@ async function _processMessageInner(
       "I've gathered quite a bit of info! Let me put it all together for you.";
   }
 
+  // Structured logging for observability
+  logger.info({
+    userId,
+    conversationId,
+    intent: intent.intent,
+    toolsCalled,
+    tokensUsed: contextResult.estimatedTokens,
+    isOnboarding,
+  }, 'Agent loop completed');
+
   memoryQueue.add('extract', {
     userId,
     messages: [
@@ -217,6 +275,25 @@ async function _processMessageInner(
   }).catch((err) => logger.error({ err }, 'Failed to queue memory extraction'));
 
   return finalText;
+}
+
+/**
+ * Check if a user is still in the onboarding phase.
+ * Onboarding ends when the user has 4+ preferences with confidence >= 0.5.
+ */
+async function checkIsOnboarding(
+  userId: string,
+  profile: Awaited<ReturnType<typeof recallUserProfile>>,
+): Promise<boolean> {
+  let highConfidenceCount = 0;
+  for (const prefs of Object.values(profile.preferences)) {
+    for (const p of prefs) {
+      if (p.confidence >= CONVERSATION.ONBOARDING_MIN_CONFIDENCE) {
+        highConfidenceCount++;
+      }
+    }
+  }
+  return highConfidenceCount < CONVERSATION.ONBOARDING_MIN_PREFERENCES;
 }
 
 async function getActiveTrip(userId: string): Promise<Trip | null> {

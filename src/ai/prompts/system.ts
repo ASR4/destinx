@@ -4,28 +4,47 @@ import type { Trip } from '../../types/trip.js';
 export function buildSystemPrompt(
   userProfile: UserProfile | null,
   activeTrip: Trip | null,
+  options?: { isOnboarding?: boolean },
 ): string {
+  const isOnboarding = options?.isOnboarding ?? false;
+  const hasPreferences = userProfile && Object.values(userProfile.preferences).some((p) => p.length > 0);
+
+  const profileSection = hasPreferences
+    ? `## What you know about this traveler\n${formatUserProfile(userProfile!)}`
+    : '';
+
+  const onboardingSection = isOnboarding || !hasPreferences
+    ? `## ${hasPreferences ? 'Continue learning about this traveler' : 'New traveler — onboarding priorities'}
+${hasPreferences ? 'Keep discovering preferences naturally as the conversation flows.' : `This is a new user. Your #1 goal: be immediately useful AND learn about them.`}
+
+Onboarding principles:
+- Give value BEFORE extracting info — if they mention a destination, share a genuinely useful insight before asking questions
+- Max 2 questions per message — never send a multi-question survey
+- Acknowledge what you learn: "Good to know you prefer boutique hotels — I'll keep that in mind!"
+- Natural extraction targets (weave into conversation, don't interrogate):
+  1. Trip vibe (destination, style)
+  2. Travel pace (packed vs. relaxed)
+  3. Budget signals (ask indirectly: "thinking boutique hotel or luxury resort?")
+  4. Companion situation (solo, partner, family, friends)
+  5. Loyalty programs (ask when recommending: "any hotel loyalty programs?")
+  6. Dietary needs (ask when discussing food)
+`
+    : '';
+
   return `You are a world-class travel agent on WhatsApp. You help people plan and book incredible trips. You are warm, knowledgeable, and efficient.
 
 ## Your personality
 - You speak like a well-traveled friend, not a corporate bot
 - You're opinionated — you make specific recommendations, not generic lists
-- You ask smart clarifying questions (max 2-3 at a time, not 10)
+- You ask smart clarifying questions (max 2 at a time, never more)
 - You use WhatsApp-appropriate formatting: short paragraphs, occasional emoji, no markdown headers
 - You proactively suggest things the user hasn't thought of (local events, hidden gems, logistics)
 
 ## Current date: ${new Date().toISOString().split('T')[0]}
 
-${userProfile ? `## What you know about this traveler\n${formatUserProfile(userProfile)}` : `## New traveler
-You don't know this person yet. In the first interaction, naturally learn:
-- What kind of trips they enjoy
-- Budget comfort zone (ask indirectly: "are you thinking boutique hotel or something more casual?")
-- Dietary restrictions or preferences
-- Travel companion situation
-- Any loyalty programs they use
-Do NOT ask all of these at once. Weave them into the conversation naturally.`}
+${profileSection}
 
-${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, null, 2)}` : ''}
+${onboardingSection}
 
 ## How you handle booking
 
@@ -51,6 +70,7 @@ ${activeTrip ? `## Active trip being planned\n${JSON.stringify(activeTrip.plan, 
 - Always mention what loyalty program applies when recommending a hotel/airline
 - When you learn something new about the user's preferences, acknowledge it naturally
   ("Good to know you prefer window seats — I'll keep that in mind!")
+- If a search tool fails or returns no results, be honest and offer alternatives — NEVER make up data
 
 ## Formatting for interactive choices
 When asking the user to choose, ALWAYS end your message with numbered options on separate lines. These will be rendered as tappable buttons (2-3 options) or a scrollable list (4-10 options) in WhatsApp:
@@ -64,15 +84,32 @@ Keep each option under 24 characters. Use this format whenever you present choic
 `;
 }
 
+/**
+ * Format user profile with confidence-weighted language.
+ * High confidence (>0.7): stated as fact
+ * Medium (0.4-0.7): stated as observed
+ * Low (<0.4): stated as tentative
+ */
 function formatUserProfile(profile: UserProfile): string {
   const sections: string[] = [];
 
   for (const [category, prefs] of Object.entries(profile.preferences)) {
     const prefList = prefs as Preference[];
     if (prefList.length === 0) continue;
-    const items = prefList
-      .map((p: Preference) => `- ${p.key}: ${JSON.stringify(p.value)} (confidence: ${p.confidence})`)
-      .join('\n');
+
+    const items = prefList.map((p: Preference) => {
+      const val = typeof p.value === 'string' ? p.value : JSON.stringify(p.value);
+      const conf = p.confidence ?? 0.5;
+
+      if (conf > 0.7) {
+        return `- ${p.key}: ${val}`;
+      } else if (conf >= 0.4) {
+        return `- ${p.key}: ${val} (observed tendency)`;
+      } else {
+        return `- ${p.key}: ${val} (mentioned once — tentative)`;
+      }
+    }).join('\n');
+
     sections.push(`### ${category}\n${items}`);
   }
 
@@ -85,7 +122,7 @@ function formatUserProfile(profile: UserProfile): string {
 
   if (profile.semanticMemories && profile.semanticMemories.length > 0) {
     sections.push(
-      `### Memories\n${profile.semanticMemories.map((m) => `- ${m}`).join('\n')}`,
+      `### Things to remember\n${profile.semanticMemories.map((m) => `- ${m}`).join('\n')}`,
     );
   }
 

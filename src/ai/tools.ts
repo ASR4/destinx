@@ -373,5 +373,33 @@ export function getTravelAgentTools(): Tool[] {
         required: ['category', 'key', 'value'],
       },
     },
+    {
+      name: 'confirm_booking',
+      description:
+        'Record that the user has confirmed a booking they made via a deep link. Call this when the user says they booked something (e.g. "I booked that hotel" or "Done, I reserved it").',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          booking_type: {
+            type: 'string',
+            enum: ['hotel', 'restaurant', 'experience', 'flight'],
+            description: 'Type of booking confirmed',
+          },
+          item_name: {
+            type: 'string',
+            description: 'Name of the hotel/restaurant/experience/flight',
+          },
+          reference_number: {
+            type: 'string',
+            description: 'Booking confirmation/reference number if the user shared it',
+          },
+          notes: {
+            type: 'string',
+            description: 'Any additional details the user shared about the booking',
+          },
+        },
+        required: ['booking_type', 'item_name'],
+      },
+    },
   ];
 }

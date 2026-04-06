@@ -20,6 +20,7 @@ import {
 } from '../rate-limiter.js';
 import { createFlightCheckoutSession } from '../payments/stripe.js';
 import { upsertPreference } from '../memory/store.js';
+import { withRetry } from '../../utils/errors.js';
 import { getDb } from '../../db/client.js';
 import { trips, conversations, bookings } from '../../db/schema.js';
 import { logger } from '../../utils/logger.js';
@@ -88,15 +89,23 @@ const TOOL_HANDLERS: Record<
   string,
   (input: ToolInput, context: ToolContext) => Promise<unknown>
 > = {
-  search_hotels: async (input) =>
-    searchHotels({
-      destination: input.destination as string,
-      checkIn: input.check_in as string,
-      checkOut: input.check_out as string,
-      guests: input.guests as number | undefined,
-      budgetPerNight: input.budget_per_night as number | undefined,
-      style: input.style as string | undefined,
-    }),
+  search_hotels: async (input) => {
+    try {
+      return await withRetry(
+        () => searchHotels({
+          destination: input.destination as string,
+          checkIn: input.check_in as string,
+          checkOut: input.check_out as string,
+          guests: input.guests as number | undefined,
+          budgetPerNight: input.budget_per_night as number | undefined,
+          style: input.style as string | undefined,
+        }),
+        { maxRetries: 1, baseDelayMs: 2000 },
+      );
+    } catch {
+      return { results: [], error: 'Hotel search temporarily unavailable. Try again in a moment.' };
+    }
+  },
 
   search_flights: async (input, ctx) => {
     const provider = new DuffelFlightProvider();
@@ -132,49 +141,84 @@ const TOOL_HANDLERS: Record<
     };
   },
 
-  search_restaurants: async (input) =>
-    searchRestaurants({
-      location: input.location as string,
-      cuisine: input.cuisine as string | undefined,
-      priceLevel: input.price_level as 'budget' | 'moderate' | 'fine_dining' | undefined,
-      dietary: input.dietary as string[] | undefined,
-      meal: input.meal as 'breakfast' | 'lunch' | 'dinner' | 'brunch' | undefined,
-    }),
+  search_restaurants: async (input) => {
+    try {
+      return await withRetry(
+        () => searchRestaurants({
+          location: input.location as string,
+          cuisine: input.cuisine as string | undefined,
+          priceLevel: input.price_level as 'budget' | 'moderate' | 'fine_dining' | undefined,
+          dietary: input.dietary as string[] | undefined,
+          meal: input.meal as 'breakfast' | 'lunch' | 'dinner' | 'brunch' | undefined,
+        }),
+        { maxRetries: 1, baseDelayMs: 2000 },
+      );
+    } catch {
+      return { results: [], error: 'Restaurant search temporarily unavailable.' };
+    }
+  },
 
-  search_experiences: async (input) =>
-    searchExperiences({
-      destination: input.destination as string,
-      date: input.date as string | undefined,
-      category: input.category as string | undefined,
-      durationHours: input.duration_hours as number | undefined,
-      budget: input.budget as number | undefined,
-    }),
+  search_experiences: async (input) => {
+    try {
+      return await withRetry(
+        () => searchExperiences({
+          destination: input.destination as string,
+          date: input.date as string | undefined,
+          category: input.category as string | undefined,
+          durationHours: input.duration_hours as number | undefined,
+          budget: input.budget as number | undefined,
+        }),
+        { maxRetries: 1, baseDelayMs: 2000 },
+      );
+    } catch {
+      return { results: [], error: 'Experience search temporarily unavailable.' };
+    }
+  },
 
-  search_transport: async (input) =>
-    searchTransport({
-      from: input.from as string,
-      to: input.to as string,
-      date: input.date as string | undefined,
-      preference: input.preference as
-        | 'fastest'
-        | 'cheapest'
-        | 'scenic'
-        | 'most_comfortable'
-        | undefined,
-    }),
+  search_transport: async (input) => {
+    try {
+      return await withRetry(
+        () => searchTransport({
+          from: input.from as string,
+          to: input.to as string,
+          date: input.date as string | undefined,
+          preference: input.preference as
+            | 'fastest'
+            | 'cheapest'
+            | 'scenic'
+            | 'most_comfortable'
+            | undefined,
+        }),
+        { maxRetries: 1, baseDelayMs: 2000 },
+      );
+    } catch {
+      return { results: [], error: 'Transport search temporarily unavailable.' };
+    }
+  },
 
-  web_search: async (input) =>
-    webSearch(input.query as string, {
-      freshness: input.freshness as string | undefined,
-      count: input.count as number | undefined,
-      country: input.country as string | undefined,
-    }),
+  web_search: async (input) => {
+    try {
+      return await withRetry(
+        () => webSearch(input.query as string, {
+          freshness: input.freshness as string | undefined,
+          count: input.count as number | undefined,
+          country: input.country as string | undefined,
+        }),
+        { maxRetries: 1, baseDelayMs: 2000 },
+      );
+    } catch {
+      return { results: [], error: 'Web search temporarily unavailable.' };
+    }
+  },
 
   check_weather: async (input) => {
     try {
-      return await getWeather(input.location as string, input.date as string);
+      return await withRetry(
+        () => getWeather(input.location as string, input.date as string),
+        { maxRetries: 1, baseDelayMs: 1000 },
+      );
     } catch {
-      return { error: 'Weather data not available' };
+      return { error: 'Weather data not available right now.' };
     }
   },
 
@@ -184,7 +228,6 @@ const TOOL_HANDLERS: Record<
    * Returns a short summary to Claude so it can write an acknowledgement.
    */
   create_trip_plan: async (input, ctx) => {
-    // Check for missing required fields before generating the plan
     const { checkTripPlanInput } = await import('./clarifier.js');
     const clarification = checkTripPlanInput({
       destination: input.destination as string | undefined,
@@ -215,27 +258,47 @@ const TOOL_HANDLERS: Record<
       avoid: input.avoid as string[] | undefined,
     };
 
-    const plan = await generateTripPlan(ctx.userId, planInput);
+    let plan = await generateTripPlan(ctx.userId, planInput);
     const { destination } = planInput;
 
-    const tripId = await saveTripPlan(ctx.userId, planInput, plan);
+    // Validate the plan (Upgrade 4)
+    const { validatePlan, applyAutoFixes } = await import('../planning/validator.js');
+    const validation = await validatePlan(plan, {
+      budget: planInput.budgetTotal ? { total: planInput.budgetTotal, currency: 'USD' } : undefined,
+      pace: planInput.pace,
+      destination: planInput.destination,
+    });
 
-    // Send messages to the user before Claude writes its acknowledgement
+    // Auto-fix what we can
+    const autoFixable = validation.issues.filter((i) => i.autoFixable);
+    if (autoFixable.length > 0) {
+      plan = applyAutoFixes(plan, validation.issues);
+    }
+
+    const tripId = await saveTripPlan(ctx.userId, planInput, plan);
     await deliverTripPlan(ctx.userPhone, plan, destination);
 
     if (ctx.conversationId) {
       await setConversationState(ctx.conversationId, 'reviewing_plan');
     }
 
+    const unfixedIssues = validation.issues.filter((i) => !i.autoFixable);
+    const issueNotes = unfixedIssues.length > 0
+      ? `\nValidation notes: ${unfixedIssues.map((i) => i.message).join('; ')}`
+      : '';
+
     return {
       status: 'delivered',
       tripId,
       dayCount: plan.days.length,
       destination,
+      validation: validation.summary,
+      confidence: validation.confidence,
       message:
         'The itinerary has been sent to the user directly in WhatsApp. ' +
-        'Briefly acknowledge it was delivered and invite them to reply ' +
-        '"LOVE IT" to start booking or "CHANGE [what]" to modify anything.',
+        validation.summary + issueNotes + ' ' +
+        'Briefly acknowledge it was delivered and mention any validation notes. ' +
+        'Invite them to reply "LOVE IT" to start booking or "CHANGE [what]" to modify anything.',
     };
   },
 
@@ -442,10 +505,18 @@ const TOOL_HANDLERS: Record<
         const LABELS: Record<string, string> = {
           direct: '🏨 Direct site (best rates + perks)',
           bookingCom: '🅱️ Booking.com',
+          marriott: '🏨 Marriott',
+          hilton: '🏨 Hilton',
+          hyatt: '🏨 Hyatt',
+          airbnb: '🏡 Airbnb',
           openTable: '🍽️ OpenTable',
+          resy: '🍽️ Resy',
           getYourGuide: '🎭 GetYourGuide',
           viator: '🎭 Viator',
           googleMaps: '📍 Google Maps',
+          skyscanner: '✈️ Skyscanner',
+          googleFlights: '✈️ Google Flights',
+          kayak: '✈️ Kayak',
         };
         const lines = ['🔗 Here are your best options to book:', ''];
         links.forEach(([key, url], idx) => {
@@ -457,6 +528,17 @@ const TOOL_HANDLERS: Record<
         if (bookingDetails.type === 'hotel') lines.push('💡 The direct hotel site usually has the best rates + loyalty perks!');
         await sendText(toWhatsAppAddress(ctx.userPhone), lines.join('\n'));
       }
+
+      // Track deep-link booking in the bookings table (Upgrade 8c)
+      const tripId = await getActiveTripId(ctx.userId);
+      await getDb().insert(bookings).values({
+        tripId,
+        userId: ctx.userId,
+        type: bookingDetails.type,
+        provider: (input.provider as string) ?? 'deep_link',
+        status: 'link_sent',
+        details: bookingDetails,
+      }).catch((err) => logger.warn({ err }, 'Failed to track deep-link booking'));
 
       return {
         status: 'deep_links_sent',
@@ -603,6 +685,58 @@ const TOOL_HANDLERS: Record<
       source: 'explicit',
     });
     return { saved: true };
+  },
+
+  confirm_booking: async (input, ctx) => {
+    const db = getDb();
+    const bookingType = input.booking_type as string;
+    const itemName = input.item_name as string;
+    const referenceNumber = input.reference_number as string | undefined;
+
+    // Find the most recent link_sent booking matching this type
+    const [existing] = await db
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(
+        eq(bookings.userId, ctx.userId),
+      )
+      .orderBy(bookings.createdAt)
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(bookings)
+        .set({
+          status: 'user_confirmed',
+          bookingReference: referenceNumber ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, existing.id));
+
+      logger.info({ userId: ctx.userId, bookingType, itemName, referenceNumber }, 'Booking confirmed by user');
+      return {
+        confirmed: true,
+        message: `Great, I've recorded your ${bookingType} booking for ${itemName}. I'll reference this in your trip plan.`,
+      };
+    }
+
+    // No existing booking found — create one
+    const tripId = await getActiveTripId(ctx.userId);
+    await db.insert(bookings).values({
+      tripId,
+      userId: ctx.userId,
+      type: bookingType,
+      provider: 'user_confirmed',
+      status: 'user_confirmed',
+      details: { itemName, notes: input.notes },
+      bookingReference: referenceNumber ?? null,
+    });
+
+    logger.info({ userId: ctx.userId, bookingType, itemName }, 'New user-confirmed booking created');
+    return {
+      confirmed: true,
+      message: `Got it! I've saved your ${bookingType} booking for ${itemName}. I'll include it in your trip.`,
+    };
   },
 };
 

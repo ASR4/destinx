@@ -8,6 +8,9 @@ export type BookingType =
 export type BookingStatus =
   | 'planned'
   | 'pending_booking'
+  | 'pending_payment'
+  | 'link_sent'
+  | 'user_confirmed'
   | 'booked'
   | 'cancelled'
   | 'failed';
@@ -87,11 +90,17 @@ export interface DeepLinks {
   agoda?: string | null;
   skyscanner?: string | null;
   googleFlights?: string | null;
+  kayak?: string | null;
   openTable?: string | null;
+  resy?: string | null;
   getYourGuide?: string | null;
   viator?: string | null;
   direct?: string | null;
   googleMaps?: string | null;
+  marriott?: string | null;
+  hilton?: string | null;
+  hyatt?: string | null;
+  airbnb?: string | null;
 }
 
 export interface BookingSession {

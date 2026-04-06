@@ -5,6 +5,7 @@ import type {
 } from '../../types/whatsapp.js';
 import { logger } from '../../utils/logger.js';
 import { WHATSAPP } from '../../config/constants.js';
+import { withRetry } from '../../utils/errors.js';
 
 /**
  * Fix markdown formatting for WhatsApp compatibility.
@@ -37,20 +38,23 @@ function getFromNumber(): string {
 export async function sendText(to: string, body: string): Promise<void> {
   const cleaned = cleanForWhatsApp(body);
   const truncated = cleaned.slice(0, WHATSAPP.MAX_MESSAGE_LENGTH);
-  try {
-    await getClient().messages.create({
-      body: truncated,
-      from: getFromNumber(),
-      to,
-    });
-  } catch (err: any) {
-    const code = err?.code ?? err?.status ?? 'unknown';
-    const msg = err?.message ?? String(err);
-    logger.error(
-      `WhatsApp send failed [${code}]: ${msg} (to=${to}, bodyLen=${truncated.length})`,
-    );
-    throw err;
-  }
+  await withRetry(
+    async () => {
+      await getClient().messages.create({
+        body: truncated,
+        from: getFromNumber(),
+        to,
+      });
+    },
+    {
+      maxRetries: 3,
+      baseDelayMs: 1000,
+      maxDelayMs: 16000,
+      onRetry: (attempt, err) => {
+        logger.warn({ attempt, error: err.message }, 'Retrying WhatsApp send');
+      },
+    },
+  );
 }
 
 /**

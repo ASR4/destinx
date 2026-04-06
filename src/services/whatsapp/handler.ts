@@ -148,6 +148,17 @@ async function _handleIncomingMessage(
     },
   });
 
+  // Handle unsupported media (audio, video, documents without text)
+  if (message.numMedia > 0 && !message.body.trim()) {
+    const { sendText } = await import('./sender.js');
+    await sendText(
+      whatsappTo,
+      "I can read text and images — could you type that out for me? 📝",
+    ).catch(() => {});
+    logger.info({ userId, mediaCount: message.numMedia }, 'Unsupported media received');
+    return;
+  }
+
   // 5. Queue for async processing (propagate correlation ID for end-to-end tracing)
   await conversationQueue.add('process', {
     userId,

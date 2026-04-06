@@ -12,9 +12,10 @@ import { logger } from '../utils/logger.js';
  * - Price monitoring: Check prices for active bookings every 6 hours
  * - Confidence decay: Decay stale preferences daily
  * - Post-trip feedback: Check for recently ended trips every hour
+ * - Abandoned plan follow-up: Check every 6 hours for stale planning conversations
+ * - Trip countdown: Check daily for upcoming trips needing reminders
  */
 export async function startScheduler(): Promise<void> {
-  // Remove stale repeatable jobs from previous deploys before adding fresh ones
   await cleanRepeatableJobs(priceCheckQueue);
   await cleanRepeatableJobs(memoryQueue);
 
@@ -39,7 +40,21 @@ export async function startScheduler(): Promise<void> {
     { repeat: { every: 60 * 60 * 1000 } },
   );
 
-  logger.info('Scheduler started with repeatable jobs');
+  // Abandoned plan follow-up — every 6 hours
+  await memoryQueue.add(
+    'abandoned-plan-check',
+    {},
+    { repeat: { every: 6 * 60 * 60 * 1000 } },
+  );
+
+  // Trip countdown reminders — daily at 9 AM UTC
+  await memoryQueue.add(
+    'trip-countdown',
+    {},
+    { repeat: { pattern: '0 9 * * *' } },
+  );
+
+  logger.info('Scheduler started with repeatable jobs (including notifications)');
 }
 
 async function cleanRepeatableJobs(queue: typeof priceCheckQueue): Promise<void> {
@@ -56,19 +71,11 @@ async function cleanRepeatableJobs(queue: typeof priceCheckQueue): Promise<void>
   }
 }
 
-/**
- * Process the confidence decay job.
- * Called by the memory queue worker when the 'confidence-decay' job fires.
- */
 export async function runConfidenceDecay(): Promise<void> {
   const count = await decayPreferenceConfidence();
   logger.info({ decayedCount: count }, 'Confidence decay completed');
 }
 
-/**
- * Check for trips that ended recently and queue post-trip feedback.
- * Joins with users table to get phone numbers.
- */
 export async function runPostTripCheck(): Promise<void> {
   const db = getDb();
   const yesterday = new Date();
@@ -96,8 +103,6 @@ export async function runPostTripCheck(): Promise<void> {
 
   for (const trip of endedTrips) {
     logger.info({ tripId: trip.tripId, userId: trip.userId }, 'Trip ended — queuing post-trip feedback');
-
-    // Queue memory extraction job for post-trip feedback
     await memoryQueue.add('post-trip-feedback', {
       userId: trip.userId,
       tripId: trip.tripId,
@@ -106,14 +111,21 @@ export async function runPostTripCheck(): Promise<void> {
   }
 }
 
-/**
- * Run the price check sweep: query all active bookings with price data and enqueue individual jobs.
- * Called by the price-check queue worker when the 'check-all-prices' job fires.
- */
+export async function runAbandonedPlanCheck(): Promise<void> {
+  const { checkAbandonedPlans } = await import('../services/notifications/service.js');
+  await checkAbandonedPlans();
+  logger.info('Abandoned plan check completed');
+}
+
+export async function runTripCountdown(): Promise<void> {
+  const { checkTripCountdowns } = await import('../services/notifications/service.js');
+  await checkTripCountdowns();
+  logger.info('Trip countdown check completed');
+}
+
 export async function runPriceCheckSweep(): Promise<void> {
   const db = getDb();
 
-  // Find active bookings that have a price stored
   const activeBookings = await db
     .select({
       id: bookings.id,
